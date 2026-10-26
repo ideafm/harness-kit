@@ -57,10 +57,10 @@ fi
 max=$(tw_get .maxRounds); max=${max:-3}
 effort=$(tw_get .escalateEffort); effort=${effort:-high}
 
-sid=$(jq -r '.session_id // "default"' <<<"$input")
 round_file="$TW_STATE/stop-$sid"
 log="$TW_STATE/test.log"
 
+sid=$(jq -r '.session_id // "default"' <<<"$input")
 env_re='ECONNREFUSED|ENOTFOUND|EADDRNOTAVAIL|Cannot connect to the Docker daemon|Is the docker daemon running|could not connect to server|Connection refused'
 env_fail() {
   echo "env $(date '+%Y-%m-%d %H:%M')" >"$TW_STATE/last-test"
@@ -70,11 +70,27 @@ env_fail() {
 }
 
 setup=$(tw_get .setup)
-if [ -n "$setup" ] && ! (cd "$TW_ROOT" && eval "$setup") >"$TW_STATE/setup.log" 2>&1; then
-  env_fail "setup упал" "$setup" setup.log
+teardown=$(tw_get .teardown)
+env_file="$TW_STATE/env"
+run_setup() {
+  (cd "$TW_ROOT" && eval "$setup") >"$TW_STATE/setup.log" 2>&1 || env_fail "setup упал" "$setup" setup.log
+  echo "$sid $(date '+%Y-%m-%d %H:%M')" >"$env_file"
+  stage "окружение поднято ($setup)${teardown:+ — остаётся работать, остановить: $teardown}"
+}
+run_check() { (cd "$TW_ROOT" && NO_COLOR=1 FORCE_COLOR=0 eval "$test_cmd") >"$log" 2>&1; }
+
+if [ -n "$setup" ] && [ "$(cut -d' ' -f1 "$env_file" 2>/dev/null)" != "$sid" ]; then
+  run_setup
 fi
 
-if (cd "$TW_ROOT" && NO_COLOR=1 FORCE_COLOR=0 eval "$test_cmd") >"$log" 2>&1; then
+passed=0
+run_check && passed=1
+if [ "$passed" = 0 ] && [ -n "$setup" ] && grep -qE "$env_re" "$log"; then
+  run_setup
+  run_check && passed=1
+fi
+
+if [ "$passed" = 1 ]; then
   rm -f "$round_file"
   echo "green $(date '+%Y-%m-%d %H:%M')" >"$TW_STATE/last-test"
   stage "тесты: зелёные ($test_cmd)"

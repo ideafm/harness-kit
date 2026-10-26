@@ -78,4 +78,9 @@ echo
 echo "Журнал — последние записи"
 sed -n '/^## Журнал/,$p' "$plan" | grep -vE '^## |^$' | sed 's/^- //' | tail -4 | sed 's/^/  /' | wrap
 echo
+if [ -f "$state/env" ]; then
+  td=$(jq -r '.teardown // empty' "$root/.claude/tw.json")
+  echo "Окружение поднято tw $(cut -d' ' -f2- "$state/env") и продолжает работать${td:+ — остановить: $td}"
+  echo
+fi
 echo "Решение: «принято» → отмечу приёмку, запишу в журнал и спрошу про коммит. «доработать» → скажи, что не так."

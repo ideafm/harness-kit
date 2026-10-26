@@ -44,6 +44,8 @@ if [ -z "$test_cmd" ] && [ -f "$root/package.json" ] &&
   [ -f "$root/pnpm-lock.yaml" ] && test_cmd="pnpm test"
 fi
 check_cmd=$(get .check)
+env_st=$(cat "$state/env" 2>/dev/null | cut -d' ' -f2-)
+teardown=$(get .teardown)
 max=$(get .maxRounds)
 last_test=$(cat "$state/last-test" 2>/dev/null)
 last_scope=$(cat "$state/last-scope" 2>/dev/null)
@@ -62,6 +64,7 @@ echo
 row "$(mark skill spec)" "Цель → спецификация" "skill tw:spec" "спецификаций: $specs${last_spec:+ · последняя: $(basename "$last_spec")}"
 row "$(mark skill plan)" "Спецификация → план" "skill tw:plan" "планов: $plans_open открыто, $plans_done готово"
 row "$(mark hook Stop)" "Loop до зелёных тестов" "Stop-hook" "${check_cmd:-${test_cmd:-тестов пока нет}} · кругов ${max:-3}, потом субагент → человек"
+[ -n "$(get .setup)" ] && row "$(mark hook Stop)" "Окружение" "Stop-hook" "$(get .setup) · $( [ -n "$env_st" ] && echo "поднято tw $env_st" || echo "ещё не поднималось")${teardown:+ · остановить: $teardown}"
 row "$(mark hook Stop)" "Проверка" "Stop-hook" "последний прогон: ${last_test:-ещё не было}"
 row "$(mark hook Stop)" "Scope" "Stop-hook" "diff против плана и «Не трогаем», бюджет ${budget:-400} строк${last_scope:+ · $last_scope}"
 row "$(mark hook Stop)" "Независимая проверка" "Stop-hook" "свежий claude (${verify_model:-sonnet}) по спеке и diff${last_verify:+ · $last_verify}"
