@@ -16,11 +16,18 @@ tw_get() {
   jq -r "$1 // empty" "$TW_CONFIG"
 }
 
+tw_pm() {
+  if [ -f "$TW_ROOT/pnpm-lock.yaml" ]; then echo pnpm
+  elif [ -f "$TW_ROOT/yarn.lock" ]; then echo yarn
+  else echo npm
+  fi
+}
+
 tw_test_cmd() {
   local cmd
   cmd=$(tw_get .test)
   if [ -z "$cmd" ] && [ -f "$TW_ROOT/package.json" ]; then
-    jq -e '.scripts.test | strings | test("no test specified") | not' "$TW_ROOT/package.json" >/dev/null 2>&1 && cmd="npm test"
+    jq -e '.scripts.test | strings | test("no test specified") | not' "$TW_ROOT/package.json" >/dev/null 2>&1 && cmd="$(tw_pm) test"
   fi
   echo "$cmd"
 }
@@ -29,7 +36,7 @@ tw_check_cmd() {
   local cmd
   cmd=$(tw_get .check)
   if [ -z "$cmd" ] && [ -f "$TW_ROOT/package.json" ]; then
-    jq -e '.scripts.check | strings' "$TW_ROOT/package.json" >/dev/null 2>&1 && cmd="npm run check"
+    jq -e '.scripts.check | strings' "$TW_ROOT/package.json" >/dev/null 2>&1 && cmd="$(tw_pm) run check"
   fi
   [ -n "$cmd" ] || cmd=$(tw_test_cmd)
   echo "$cmd"

@@ -61,12 +61,28 @@ sid=$(jq -r '.session_id // "default"' <<<"$input")
 round_file="$TW_STATE/stop-$sid"
 log="$TW_STATE/test.log"
 
+env_re='ECONNREFUSED|ENOTFOUND|EADDRNOTAVAIL|Cannot connect to the Docker daemon|Is the docker daemon running|could not connect to server|Connection refused'
+env_fail() {
+  echo "env $(date '+%Y-%m-%d %H:%M')" >"$TW_STATE/last-test"
+  stage "окружение: $1 — нужен человек"
+  emit "$(jq -n --arg m "tw: проверки не запустились из-за окружения, а не кода ($1). Подними окружение${2:+ ($2)} — агента не блокирую. Лог: .claude/tw-state/$3" '{systemMessage: $m}')"
+  exit 0
+}
+
+setup=$(tw_get .setup)
+if [ -n "$setup" ] && ! (cd "$TW_ROOT" && eval "$setup") >"$TW_STATE/setup.log" 2>&1; then
+  env_fail "setup упал" "$setup" setup.log
+fi
+
 if (cd "$TW_ROOT" && NO_COLOR=1 FORCE_COLOR=0 eval "$test_cmd") >"$log" 2>&1; then
   rm -f "$round_file"
   echo "green $(date '+%Y-%m-%d %H:%M')" >"$TW_STATE/last-test"
   stage "тесты: зелёные ($test_cmd)"
   after_tests
 fi
+
+env_hit=$(grep -m1 -oE "$env_re[^\"'}]{0,40}" "$log")
+[ -n "$env_hit" ] && env_fail "$env_hit" "$setup" test.log
 
 round=0; last_sig=""
 [ -f "$round_file" ] && read -r round last_sig <"$round_file"
