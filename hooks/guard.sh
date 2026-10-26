@@ -35,15 +35,6 @@ if [ "$tool" = "Bash" ]; then
   exit 0
 fi
 
-[ "$(tw_get .noComments)" = "false" ] && exit 0
-case "$file" in *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.vue) ;; *) exit 0 ;; esac
-
-transcript=$(jq -r '.transcript_path // empty' <<<"$input")
-if [ -f "$transcript" ]; then
-  last_prompt=$(jq -r 'select(.type=="user" and (.message.content|type)=="string") | .message.content' "$transcript" | tail -1)
-  grep -qiE 'коммент|comment|jsdoc|tsdoc' <<<"$last_prompt" && exit 0
-fi
-
 case "$tool" in
   Write) new=$(jq -r '.tool_input.content // empty' <<<"$input"); old="" ;;
   Edit) new=$(jq -r '.tool_input.new_string // empty' <<<"$input"); old=$(jq -r '.tool_input.old_string // empty' <<<"$input") ;;
@@ -52,6 +43,31 @@ esac
 
 added=$(grep -Fvx -f <(printf '%s\n' "$old") <<<"$new")
 [ -z "$old" ] && added="$new"
+
+transcript=$(jq -r '.transcript_path // empty' <<<"$input")
+last_prompt=""
+[ -f "$transcript" ] && last_prompt=$(jq -r 'select(.type=="user" and (.message.content|type)=="string") | .message.content' "$transcript" | tail -1)
+
+base=$(basename "$file")
+case "$base" in
+  tsconfig*.json|jsconfig*.json|eslint.config.*|.eslintrc*|.oxlintrc*|oxlint.json|biome.json|biome.jsonc|.prettierrc*|prettier.config.*|vitest.config.*|jest.config.*|.size-limit*|knip.json|knip.config.*|.dependency-cruiser.*)
+    [ "$tool" = "Write" ] && [ ! -f "$file" ] && exit 0
+    grep -qF "$base" <<<"$last_prompt" && exit 0
+    while IFS= read -r p; do grep -qF "$base" "$p" && exit 0; done < <(tw_current_plans)
+    deny "$base — конфиг проверок. Менять его можно, только если пользователь прямо попросил или файл есть в текущем плане. Не ослабляй проверки, чтобы пройти Stop: почини код. Если правка правда нужна — впиши её в план с причиной или спроси пользователя."
+    ;;
+esac
+
+case "$file" in *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.vue) ;; *) exit 0 ;; esac
+
+suppress=$(grep -nE '(eslint-disable|oxlint-disable|biome-ignore|@ts-ignore|@ts-expect-error|@ts-nocheck|istanbul ignore|c8 ignore|v8 ignore)' <<<"$added" | head -3)
+if [ -n "$suppress" ] && ! grep -qiE 'disable|ignore|подав|отключ|игнор' <<<"$last_prompt"; then
+  deny "Подавлять проверки (eslint-disable, @ts-ignore, @ts-expect-error и т. п.) агенту нельзя: это решение человека. Почини причину. Если без исключения никак — спроси пользователя, назови правило, строку и причину. Найдено:
+$suppress"
+fi
+
+[ "$(tw_get .noComments)" = "false" ] && exit 0
+grep -qiE 'коммент|comment|jsdoc|tsdoc' <<<"$last_prompt" && exit 0
 
 found=$(grep -nE '^[[:space:]]*(//|/\*|\*[[:space:]/]|\*$)|[;{})][[:space:]]+//' <<<"$added" \
   | grep -vE '(@ts-|eslint-|prettier-ignore|istanbul|c8 |v8 ignore|///[[:space:]]*<reference|#!)' \

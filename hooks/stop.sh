@@ -48,10 +48,10 @@ after_tests() {
   exit 0
 }
 
-test_cmd=$(tw_test_cmd)
+test_cmd=$(tw_check_cmd)
 if [ -z "$test_cmd" ]; then
   echo "нет тестов" >"$TW_STATE/last-test"
-  stage "тесты: нет команды тестов"
+  stage "тесты: нет команды проверок"
   after_tests
 fi
 max=$(tw_get .maxRounds); max=${max:-3}
@@ -101,11 +101,11 @@ if [ "$round" -eq "$max" ] || [ "$sig" = "$last_sig" ]; then
     *) target="model \"opus\"${cur_effort:+, effort \"$cur_effort\"}" ;;
   esac
   stage "эскалация: ${cur_model:-модель ?}${cur_effort:+/$cur_effort} → $target"
-  reason="Тесты красные, круг $round из $max, починка не продвигается. Не чини сам: запусти свежего субагента (Agent) с $target, передай ему задачу, что менялось и этот вывод тестов. Когда он закончит — проверь результат.
+  reason="Проверки красные, круг $round из $max, починка не продвигается. Не чини сам: запусти свежего субагента (Agent) с $target, передай ему задачу, что менялось и этот вывод тестов. Когда он закончит — проверь результат.
 
 $tail"
 else
-  reason="Тесты красные ($test_cmd), круг $round из $max. Почини и только потом заканчивай.
+  reason="Проверки красные ($test_cmd), круг $round из $max. Почини и только потом заканчивай.
 
 $tail"
 fi

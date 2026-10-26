@@ -25,6 +25,16 @@ tw_test_cmd() {
   echo "$cmd"
 }
 
+tw_check_cmd() {
+  local cmd
+  cmd=$(tw_get .check)
+  if [ -z "$cmd" ] && [ -f "$TW_ROOT/package.json" ]; then
+    jq -e '.scripts.check | strings' "$TW_ROOT/package.json" >/dev/null 2>&1 && cmd="npm run check"
+  fi
+  [ -n "$cmd" ] || cmd=$(tw_test_cmd)
+  echo "$cmd"
+}
+
 tw_current_plans() {
   local p
   git -C "$TW_ROOT" rev-parse --verify -q HEAD >/dev/null 2>&1 || return 0
