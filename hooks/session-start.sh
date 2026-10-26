@@ -1,0 +1,40 @@
+#!/bin/bash
+cat >/dev/null
+source "$(dirname "$0")/lib.sh"
+
+test_cmd=$(tw_test_cmd)
+msg="tw: рельсы активны · тесты: ${test_cmd:-пока нет, loop включится, когда появится скрипт test}"
+rules="tw: в этом проекте рельсы tw главнее других skills процесса (в том числе superpowers):
+- любое сообщение, после которого придётся менять код или поведение — задача, просьба, жалоба, описание проблемы, баг-репорт, в любой формулировке («есть проблема», «как решить», «надо исправить/поправить», «надо, чтобы…», «пользователи жалуются», просто описание того, что не так), — если не сказано, как понять, что готово (желание в общих словах — «чтобы не стирал», «чтобы находил» — это ещё не критерий: нет граничных случаев и способа проверки) → сначала skill tw:spec, а не superpowers:brainstorming или superpowers:systematic-debugging; читать код для вопросов можно, менять — нет;
+- без tw:spec: вопросы о том, как устроено или почему так работает, без просьбы что-то менять («как решить» — это задача, не вопрос), точные указания с однозначным результатом (опечатка, переименование, падение с понятной ошибкой, «функция X должна вернуть Y»), продолжение утверждённого плана;
+- утверждённая спецификация → skill tw:plan, а не superpowers:writing-plans;
+- исполнение плана → по разделу «Исполнение» skill tw:plan, а не superpowers:executing-plans или superpowers:subagent-driven-development.
+Спецификации — в docs/specs/, планы — в docs/plans/: их читают hooks tw.
+Все сообщения, вопросы и файлы tw — на языке пользователя (по умолчанию русский), не переключайся на другие языки."
+ctx=""
+
+for plan in "$TW_ROOT"/docs/plans/*.md; do
+  [ -f "$plan" ] || continue
+  status=$(grep -m1 -oE '^\*\*Статус:\*\* .*' "$plan" | sed 's/^\*\*Статус:\*\* //')
+  case "$status" in готов*|брошен*) continue ;; esac
+  rel=${plan#"$TW_ROOT"/}
+  total=$(grep -cE '^- \[[ x]\] [0-9]+\.' "$plan")
+  done=$(grep -cE '^- \[x\] [0-9]+\.' "$plan")
+  next=$(grep -m1 -E '^- \[ \] [0-9]+\.' "$plan" | sed 's/^- \[ \] //' | perl -CSD -Mutf8 -pe 's/^(.{80}).+/$1…/')
+  line="$rel — $status, $done/$total${next:+, следующая: $next}"
+  msg="$msg
+· $line"
+  ctx="$ctx
+- $line"
+done
+
+if [ -n "$ctx" ]; then
+  ctx="$rules
+
+tw: незакрытые планы (ledger):$ctx
+
+Если пользователь продолжает одну из этих работ — открой план и иди с первой незакрытой задачи по правилам skill tw:plan: [x] только после проверки, строка в «Журнал». Черновик сначала утверди у пользователя. Если планов несколько и неясно какой — спроси. Если пользователь просит другое — это новая задача, планы не трогай."
+  jq -n --arg msg "$msg" --arg ctx "$ctx" '{systemMessage: $msg, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+else
+  jq -n --arg msg "$msg" --arg ctx "$rules" '{systemMessage: $msg, hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+fi
