@@ -6,7 +6,7 @@ plans=()
 while IFS= read -r p; do plans+=("$p"); done < <(tw_current_plans)
 [ ${#plans[@]} -gt 0 ] || exit 0
 
-changed=$(git -C "$TW_ROOT" status --porcelain -uall --no-renames | cut -c4- | grep -vE '^(docs/|\.claude/|\.gitignore$)|(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$')
+changed=$(tw_changed | grep -vE '^(docs/|\.claude/|\.gitignore$)|(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$')
 [ -n "$changed" ] || exit 0
 
 refs=""; protected=""
@@ -32,7 +32,7 @@ while IFS= read -r f; do
 done <<<"$changed"
 
 budget=$(tw_get .diffBudget); budget=${budget:-400}
-lines=$(git -C "$TW_ROOT" diff HEAD --numstat -- . ':!docs' ':!*.lock' ':!package-lock.json' | awk '{s+=$1+$2} END {print s+0}')
+lines=$(git -C "$TW_ROOT" diff "$TW_REF" --numstat -- . ':!docs' ':!*.lock' ':!package-lock.json' | awk '{s+=$1+$2} END {print s+0}')
 while IFS= read -r f; do
   [ -f "$TW_ROOT/$f" ] && lines=$((lines + $(wc -l <"$TW_ROOT/$f")))
 done < <(git -C "$TW_ROOT" ls-files --others --exclude-standard | grep -vE '^(docs/|\.claude/)|(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$')

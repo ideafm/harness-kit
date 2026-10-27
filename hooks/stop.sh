@@ -57,10 +57,10 @@ fi
 max=$(tw_get .maxRounds); max=${max:-3}
 effort=$(tw_get .escalateEffort); effort=${effort:-high}
 
+sid=$(jq -r '.session_id // "default"' <<<"$input")
 round_file="$TW_STATE/stop-$sid"
 log="$TW_STATE/test.log"
 
-sid=$(jq -r '.session_id // "default"' <<<"$input")
 env_re='ECONNREFUSED|ENOTFOUND|EADDRNOTAVAIL|Cannot connect to the Docker daemon|Is the docker daemon running|could not connect to server|Connection refused'
 env_fail() {
   echo "env $(date '+%Y-%m-%d %H:%M')" >"$TW_STATE/last-test"
@@ -79,13 +79,16 @@ run_setup() {
 }
 run_check() { (cd "$TW_ROOT" && NO_COLOR=1 FORCE_COLOR=0 eval "$test_cmd") >"$log" 2>&1; }
 
+fresh_setup=0
 if [ -n "$setup" ] && [ "$(cut -d' ' -f1 "$env_file" 2>/dev/null)" != "$sid" ]; then
   run_setup
+  fresh_setup=1
 fi
 
 passed=0
 run_check && passed=1
-if [ "$passed" = 0 ] && [ -n "$setup" ] && grep -qE "$env_re" "$log"; then
+if [ "$passed" = 0 ] && [ -n "$setup" ] && [ "$fresh_setup" = 0 ] && [ ! -f "$env_file.retry-$sid" ] && grep -qE "$env_re" "$log"; then
+  touch "$env_file.retry-$sid"
   run_setup
   run_check && passed=1
 fi
@@ -97,8 +100,10 @@ if [ "$passed" = 1 ]; then
   after_tests
 fi
 
-env_hit=$(grep -m1 -oE "$env_re[^\"'}]{0,40}" "$log")
-[ -n "$env_hit" ] && env_fail "$env_hit" "$setup" test.log
+if [ -z "$setup" ]; then
+  env_hit=$(grep -m1 -oE "$env_re[^\"'}]{0,40}" "$log")
+  [ -n "$env_hit" ] && env_fail "$env_hit" "" test.log
+fi
 
 round=0; last_sig=""
 [ -f "$round_file" ] && read -r round last_sig <"$round_file"

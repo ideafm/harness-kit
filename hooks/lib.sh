@@ -53,6 +53,10 @@ tw_current_plans() {
   done
 }
 
+tw_changed() {
+  { git -C "$TW_ROOT" diff --name-only --no-renames "$TW_REF"; git -C "$TW_ROOT" ls-files --others --exclude-standard; } | sort -u
+}
+
 tw_plan_spec() {
   local spec
   spec=$(grep -m1 -oE '^\*\*Спецификация:\*\* .*' "$1" | sed 's/^\*\*Спецификация:\*\* //; s/`//g')
@@ -63,4 +67,6 @@ tw_plan_spec() {
 TW_CONFIG=$(tw_config) || exit 0
 TW_ROOT=$(dirname "$(dirname "$TW_CONFIG")")
 TW_STATE="$TW_ROOT/.claude/tw-state"
+TW_REF=HEAD
+[ -n "$TW_DIFF_BASE" ] && git -C "$TW_ROOT" cat-file -e "$TW_DIFF_BASE^{commit}" 2>/dev/null && TW_REF=$TW_DIFF_BASE
 mkdir -p "$TW_STATE"

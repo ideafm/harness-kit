@@ -10,7 +10,31 @@ done
 backlog="$root/docs/backlog"
 state="$root/.claude/tw-state"
 queue="$state/queue"
+pidfile="$state/run.pid"
 mkdir -p "$state"
+git() { command git -C "$root" "$@"; }
+base() { jq -r '.runBase // "main"' "$root/.claude/tw.json"; }
+
+busy() {
+  git worktree list --porcelain | grep -qx "branch refs/heads/$1"
+}
+
+commit_to() {
+  local branch=$1 msg=$2 idx parent tree c pair blob
+  shift 2
+  parent=$(git rev-parse -q --verify "refs/heads/$branch") || { echo "нет ветки $branch" >&2; return 2; }
+  busy "$branch" && { echo "ветка $branch открыта в worktree — сначала освободи её" >&2; return 2; }
+  idx=$(mktemp -u "${TMPDIR:-/tmp}/tw-index.XXXXXX")
+  GIT_INDEX_FILE=$idx git read-tree "$parent" || return 2
+  for pair in "$@"; do
+    blob=$(git hash-object -w -- "${pair#*=}") || { rm -f "$idx"; return 2; }
+    GIT_INDEX_FILE=$idx git update-index --add --cacheinfo "100644,$blob,${pair%%=*}"
+  done
+  tree=$(GIT_INDEX_FILE=$idx git write-tree)
+  rm -f "$idx"
+  [ "$tree" = "$(git rev-parse "$parent^{tree}")" ] && return 0
+  c=$(git commit-tree "$tree" -p "$parent" -m "$msg") && git update-ref "refs/heads/$branch" "$c" "$parent"
+}
 
 file() {
   local f="$backlog/$1.md"
@@ -35,7 +59,7 @@ case "$cmd" in
       [ -f "$f" ] || continue
       id=$(basename "$f" .md)
       title=$(head -1 "$f" | sed -E 's/^# B-[0-9]+ · //')
-      printf '%s\t%s\t%s\t%s\n' "$id" "$(field "$f" Приоритет)" "$(field "$f" Статус)" "$title"
+      printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$(field "$f" Приоритет)" "$(field "$f" Размер)" "$(field "$f" Статус)" "$title"
     done | sort -t$'\t' -k2,2 -k1,1
     ;;
   get)
@@ -70,13 +94,40 @@ case "$cmd" in
     cat "$queue" 2>/dev/null
     ;;
   clean)
-    [ -z "$(git -C "$root" status --porcelain --untracked-files=no)" ]
+    [ -z "$(git status --porcelain --untracked-files=no -- . ':!docs/backlog')" ]
+    ;;
+  running)
+    pid=$(cat "$pidfile" 2>/dev/null)
+    [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null | grep -q 'scripts/run\.sh'
+    ;;
+  commit-to)
+    commit_to "$@"
+    ;;
+  prepare)
+    id=$1; spec=${2#./}; plan=${3#./}
+    f=$(file "$id") || exit 2
+    for p in "$spec" "$plan"; do [ -f "$root/$p" ] || { echo "нет файла $p" >&2; exit 2; }; done
+    branch="tw/$id"
+    if ! git rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
+      git branch "$branch" "$(base)" || exit 2
+    fi
+    commit_to "$branch" "docs: add spec and plan for $id" "$spec=$root/$spec" "$plan=$root/$plan" || exit 2
+    for p in "$spec" "$plan"; do
+      if ! git ls-files --error-unmatch -- "$p" >/dev/null 2>&1 && cmp -s "$root/$p" <(git show "$branch:$p"); then
+        rm -f "$root/$p"
+      fi
+    done
+    CLAUDE_PROJECT_DIR="$root" bash "$0" set "$id" Спека "$spec"
+    CLAUDE_PROJECT_DIR="$root" bash "$0" set "$id" План "$plan"
+    CLAUDE_PROJECT_DIR="$root" bash "$0" set "$id" Ветка "$branch"
+    CLAUDE_PROJECT_DIR="$root" bash "$0" set "$id" Статус готова "спека и план в $branch"
+    echo "$id · спека и план в $branch"
     ;;
   root)
     echo "$root"
     ;;
   *)
-    echo "backlog.sh list | get B-NNN Поле | set B-NNN Поле значение [заметка] | log B-NNN текст | queue-add B-NNN… | queue-next | queue-pop | queue | clean | root" >&2
+    echo "backlog.sh list | get B-NNN Поле | set B-NNN Поле значение [заметка] | log B-NNN текст | queue-add B-NNN… | queue-next | queue-pop | queue | clean | running | commit-to ветка сообщение путь=файл… | prepare B-NNN спека план | root" >&2
     exit 2
     ;;
 esac

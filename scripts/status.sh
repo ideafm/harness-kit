@@ -90,6 +90,30 @@ plan_block() {
   [ -n "$journal" ] && { echo "  журнал:"; sed 's/^/    /' <<<"$journal"; }
 }
 
+if [ -d "$root/docs/backlog" ]; then
+  backlog=$(CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" list)
+  count() { awk -F'\t' -v s="$1" 'index($4, s) == 1' <<<"$backlog" | grep -c .; }
+  queued=$(grep -c . "$state/queue" 2>/dev/null)
+  echo
+  echo "Бэклог · docs/backlog/"
+  echo "  входящих $(count входящая) · готовых $(count готова) · в очереди ${queued:-0} · на приёмке $(count 'на приёмке') · принято $(count принята)"
+  runlog="$state/run.log"
+  if [ -f "$runlog" ]; then
+    last=$(awk '/ · старт · /{buf=""} {buf = buf $0 "\n"} END{printf "%s", buf}' "$runlog")
+    started=$(head -1 <<<"$last" | cut -d' ' -f1,2)
+    ok=$(grep -c ' · на приёмке · ' <<<"$last")
+    stuck=$(grep -c ' · застряла: ' <<<"$last")
+    if CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" running; then
+      cur=$(grep -oE ' · B-[0-9]+ · старт в ' <<<"$last" | tail -1 | grep -oE 'B-[0-9]+')
+      run_st="идёт с $started${cur:+, сейчас $cur} (остановить: bash $PLUGIN/scripts/run.sh stop)"
+    else
+      run_st="последний с $started"
+    fi
+    echo "  прогон: $run_st · сделано $ok · застряло $stuck · ждёт приёмки $(count 'на приёмке')"
+  fi
+  awk -F'\t' 'index($4, "застряла") == 1 { print "  " $1 " · " $4 }' <<<"$backlog" | perl -CSD -Mutf8 -pe 's/^(.{100}).+/$1…/'
+fi
+
 open_found=0
 for p in "$root"/docs/plans/*.md; do
   [ -f "$p" ] || continue
