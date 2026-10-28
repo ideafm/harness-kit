@@ -110,6 +110,8 @@ case "$cmd" in
     branch="tw/$id"
     if ! git rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
       git branch "$branch" "$(base)" || exit 2
+      old=$(ls "$state/run/$id"-*.jsonl "$state/run/$id".* 2>/dev/null)
+      [ -n "$old" ] && mkdir -p "$state/run/old" && mv $old "$state/run/old/"
     fi
     commit_to "$branch" "docs: add spec and plan for $id" "$spec=$root/$spec" "$plan=$root/$plan" || exit 2
     for p in "$spec" "$plan"; do

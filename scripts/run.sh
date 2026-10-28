@@ -36,7 +36,9 @@ local max=${1:-0}
 cfg="$root/.claude/tw.json"
 base=$(jq -r '.runBase // "main"' "$cfg")
 threshold=$(jq -r '.runLimit // 95' "$cfg")
-model=$(jq -r '.runModel // empty' "$cfg")
+model=$(jq -r '.runModel // "sonnet"' "$cfg")
+escalate=$(jq -r 'if has("runEscalate") then (.runEscalate // "") else "opus" end' "$cfg")
+escalated=""
 install=$(jq -r '.runInstall // empty' "$cfg")
 wt=$(jq -r '.runWorktree // empty' "$cfg"); wt=${wt:-.claude/worktrees/tw-run}
 [[ "$wt" = /* ]] || wt="$root/$wt"
@@ -235,7 +237,8 @@ while id=$(bash "$B" queue-next) && [ -n "$id" ]; do
 
   out="$runs/$id-$(date +%Y%m%d-%H%M%S).jsonl"
   args=(-p "$(prompt_for "$id" "$plan")" --permission-mode acceptEdits --output-format stream-json --verbose --allowedTools "${allow[@]}")
-  [ -n "$model" ] && args+=(--model "$model")
+  task_model=$model; [ "$escalated" = "$id" ] && task_model=$escalate
+  [ -n "$task_model" ] && args+=(--model "$task_model")
   args+=(--plugin-dir "$plugin" --strict-mcp-config --settings "$(jq -c '{enabledPlugins: ((.enabledPlugins // {}) | map_values(false))}' "$HOME/.claude/settings.json" 2>/dev/null || echo '{}')")
   (cd "$wt" && CLAUDE_PROJECT_DIR="$wt" TW_DIFF_BASE=$(git merge-base "$base" "$branch") exec claude "${args[@]}") </dev/null >"$out" 2>&1 &
   cpid=$!
@@ -274,7 +277,15 @@ while id=$(bash "$B" queue-next) && [ -n "$id" ]; do
       [ "$env_fails" -ge 2 ] && { bash "$B" queue-pop; say "два сбоя окружения подряд — стоп"; exit 1; } ;;
     *)
       wip "$untracked" "$id"; release
-      stuck "$id" "${res#stuck:}"; env_fails=0 ;;
+      reason=${res#stuck:}
+      if [ -n "$escalate" ] && [ "$escalated" != "$id" ] && [ "$escalate" != "$model" ] && [[ "$reason" != нужен\ человек* && "$reason" != план\ брошен* ]]; then
+        escalated=$id
+        bash "$B" set "$id" Статус "готова" "$model не справился ($reason), повтор на $escalate"
+        say "$id · $reason на $model — повтор на $escalate"
+        untracked=""
+        continue
+      fi
+      stuck "$id" "$reason"; env_fails=0 ;;
   esac
   bash "$B" queue-pop
   untracked=""
