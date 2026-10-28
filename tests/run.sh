@@ -1,9 +1,9 @@
 #!/bin/bash
 K="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$K/tests/fakebin:$PATH"
-export TW_RUN_SLEEP=1
+export TW_RUN_SLEEP=1 TW_RUN_TICK=0.3
 work=$(mktemp -d)
-trap 'pkill -f "$work" 2>/dev/null; rm -rf "$work"' EXIT
+trap 'pkill -f "$work" 2>/dev/null; [ -n "$KEEP" ] || rm -rf "$work"' EXIT
 pass=0; fail=0; only=$1
 
 ok() { pass=$((pass + 1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
@@ -34,6 +34,8 @@ task() {
 - **Статус:** входящая
 - **Приоритет:** P2 · **Размер:** S · **Категория:** корректность
 - **Готово, когда:** работает
+- **Область:** ${AREA:-—}
+- **Зависит от:** ${DEPS:-—}
 - **Спека:** — · **План:** — · **Ветка:** —
 
 ## Журнал
@@ -78,7 +80,9 @@ if scenario ok; then
   check "worktree отпустил ветку" bash -c "! git worktree list --porcelain | grep -q 'refs/heads/tw/B-001'"
   check "папка не тронута" untouched
   check "итог проверок сохранён" grep -q 'test: green' .claude/tw-state/run/B-001.checks
-  check "карточка показывает заходы" has "$(tw accept.sh B-001)" "sonnet · ходов 3"
+  card=$(tw accept.sh B-001)
+  check "карточка показывает заходы" has "$card" "sonnet · ходов 3"
+  check "карточка даёт resume из worktree" has "$card" "worktrees/tw-run && claude --resume fake-"
   check "стоимость задачи в run.log" grep -q 'B-001 · на приёмке · \$0.01' .claude/tw-state/run.log
   check "итог прогона в run.log" grep -q 'итог · на приёмке 1 · застряло 0 · \$0.01' .claude/tw-state/run.log
   check "уведомление об итоге" grep -q 'Прогон закончен: на приёмке 1, застряло 0' "$FAKE_LOG.notify"
@@ -223,6 +227,59 @@ if scenario rebase; then
   tw accept.sh rebase B-001 >/dev/null
   check "rebase без конфликта" is "$?" 0
   check "ветка на свежем main" git merge-base --is-ancestor main tw/B-001
+fi
+
+if scenario parallel; then
+  fixture parallel
+  printf '{"check": "true", "runEnv": {"TEST_DB": "db_{slot}"}}\n' >.claude/tw.json
+  AREA='`src/a`' prepare B-001 >/dev/null
+  AREA='`src/b`' prepare B-002 >/dev/null
+  AREA='`src/c`' prepare B-003 >/dev/null
+  AREA='`src/a/deep`' prepare B-004 >/dev/null
+  FAKE_MODE=slow FAKE_SLEEP=2 run B-001 B-002 B-003 B-004
+  check "все четыре на приёмке" is "$(for i in 1 2 3 4; do st B-00$i; done | sort -u)" "на приёмке"
+  starts=$(grep -n 'старт в' .claude/tw-state/run.log | cut -d: -f1 | head -3 | tr '\n' ' ')
+  first_done=$(grep -n 'на приёмке' .claude/tw-state/run.log | head -1 | cut -d: -f1)
+  check "три задачи стартовали до первой готовой" bash -c "for n in $starts; do [ \$n -lt $first_done ] || exit 1; done"
+  check "исполнители 1, 2, 3" is "$(grep -oE 'исполнитель [0-9]+ · sonnet' .claude/tw-state/run.log | head -3 | sort -u | wc -l | tr -d ' ')" 3
+  b4=$(grep -n 'B-004 · старт' .claude/tw-state/run.log | cut -d: -f1)
+  b1=$(grep -n 'B-001 · на приёмке' .claude/tw-state/run.log | cut -d: -f1)
+  check "пересекающаяся область ждёт" bash -c "[ $b4 -gt $b1 ]"
+  check "runEnv с номером исполнителя" bash -c "grep -q 'B-001 slot=1 db=db_1' '$FAKE_LOG.env' && grep -q 'slot=3 db=db_3' '$FAKE_LOG.env'"
+  check "итог по четырём" grep -q 'итог · на приёмке 4 · застряло 0' .claude/tw-state/run.log
+  check "папка не тронута" untouched
+fi
+
+if scenario deps; then
+  fixture deps
+  prepare B-001 >/dev/null
+  DEPS=B-001 prepare B-002 >/dev/null
+  DEPS=B-009 prepare B-003 >/dev/null
+  task B-004; tw backlog.sh set B-004 Статус "отклонена: не нужно" >/dev/null
+  DEPS=B-004 prepare B-005 >/dev/null
+  run B-002 B-003 B-005
+  check "зависимость не принята — ждёт в очереди" is "$(tw backlog.sh queue | tr '\n' ' ')" "B-002 B-003 "
+  check "статус ждущей не тронут" is "$(st B-002)" готова
+  check "отклонённая зависимость — застряла" has "$(st B-005)" "зависимость не будет выполнена"
+  check "лог называет ждущие" grep -q 'невыполненными зависимостями: B-002 B-003' .claude/tw-state/run.log
+  tw backlog.sh set B-001 Статус принята >/dev/null
+  tw run.sh 0 >/dev/null 2>&1
+  check "после приёмки зависимости задача пошла" is "$(st B-002)" "на приёмке"
+fi
+
+if scenario stop-many; then
+  fixture stop-many
+  AREA='`src/a`' prepare B-001 >/dev/null
+  AREA='`src/b`' prepare B-002 >/dev/null
+  tw backlog.sh queue-add B-001 B-002
+  FAKE_MODE=hang tw run.sh 0 >"$P/.claude/run.out" 2>&1 &
+  for _ in $(seq 50); do [ "$(grep -c . "$FAKE_LOG")" -ge 2 ] && break; sleep 0.2; done
+  sleep 0.5
+  tw run.sh stop >/dev/null
+  check "обе снова готовы" is "$(st B-001) $(st B-002)" "готова готова"
+  check "обе вернулись в очередь" is "$(tw backlog.sh queue | sort | tr '\n' ' ')" "B-001 B-002 "
+  check "у обеих wip-коммиты" bash -c "git log --format=%s -1 tw/B-001 | grep -q wip && git log --format=%s -1 tw/B-002 | grep -q wip"
+  check "дерево claude погашено" bash -c "! pgrep -f '$K/tests/fakebin/claude'"
 fi
 
 if scenario stop-hook; then

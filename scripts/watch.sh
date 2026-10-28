@@ -55,26 +55,30 @@ filter='
   else ([.. | strings | select(test("tw ▸"))] | unique[] | split("\n")[] | select(test("^(Stop says: )?tw ▸")) | sub("^Stop says: "; "") | "         \u001b[33m\(.)\u001b[0m")
   end'
 
-follow() { tail -n +1 -f "$1" 2>/dev/null | jq -R --unbuffered -r "fromjson? // empty | $filter" 2>/dev/null; }
+follow() { tail -n +1 -f "$1" 2>/dev/null | jq -R --unbuffered -r --arg id "$2" "fromjson? // empty | $filter | \"\\(\$id) \\(.)\"" 2>/dev/null; }
 
 echo "tw · просмотр исполнителя · ${root/#$HOME/~} · выход — ctrl+c"
 from=$(grep -n ' · старт · ' "$state/run.log" 2>/dev/null | tail -1 | cut -d: -f1)
 bash "$B" running || from=$(($(wc -l <"$state/run.log" 2>/dev/null || echo 0) + 1))
-( tail -n +"${from:-1}" -f "$state/run.log" 2>/dev/null | perl -CSD -Mutf8 -pe 'BEGIN { $| = 1 } chomp; my $c = / · старт · / ? "\e[2J\e[3J\e[H" : ""; my $end = / · конец · / ? "\e[2m   прогон закончен · окно можно оставить: следующий /tw:run очистит его; закрыть — ctrl+c\e[0m\n" : ""; $_ = "$c\e[36m$_\e[0m\n$end"' ) 2>/dev/null &
+( tail -n +"${from:-1}" -f "$state/run.log" 2>/dev/null | perl -CSD -Mutf8 -pe 'BEGIN { $| = 1 } chomp; my $c = / · старт · / ? "\e[2J\e[3J\e[H" : ""; my $end = / · итог · / ? "\e[2m   прогон закончен · окно можно оставить: следующий /tw:run очистит его; закрыть — ctrl+c\e[0m\n" : ""; $_ = "$c\e[36m$_\e[0m\n$end"' ) 2>/dev/null &
 lp=$!; disown $lp
-stopf() { [ -n "$tp" ] && { pkill -P "$tp" 2>/dev/null; kill "$tp" 2>/dev/null; wait "$tp" 2>/dev/null; }; }
+stopf() { local p; for p in $tps; do pkill -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; done; tps=""; }
 trap 'stopf; pkill -P $lp 2>/dev/null; kill $lp 2>/dev/null; wait 2>/dev/null' EXIT
-cur=""
-bash "$B" running || cur=$(ls -t "$runs"/B-*.jsonl 2>/dev/null | head -1)
+tps=""; seen=" "
+if bash "$B" running; then
+  seen=" $(find "$runs" -name 'B-*.jsonl' ! -newer "$state/run.pid" 2>/dev/null | tr '\n' ' ')"
+else
+  seen=" $(ls "$runs"/B-*.jsonl 2>/dev/null | tr '\n' ' ')"
+fi
 while :; do
-  f=$(ls -t "$runs"/B-*.jsonl 2>/dev/null | head -1)
-  if [ -n "$f" ] && [ "$f" != "$cur" ]; then
-    stopf
-    cur=$f
+  for f in $(ls -tr "$runs"/B-*.jsonl 2>/dev/null); do
+    case "$seen" in *" $f "*) continue ;; esac
+    seen="$seen$f "
+    id=$(basename "$f" .jsonl); id=${id%%-2*}
     echo
     echo $'\033[1m'"── $(basename "$f" .jsonl)"$'\033[0m'
-    follow "$f" 2>/dev/null &
-    tp=$!; disown $tp
-  fi
+    follow "$f" "$id" 2>/dev/null &
+    p=$!; disown $p; tps="$tps $p"
+  done
   sleep 2
 done

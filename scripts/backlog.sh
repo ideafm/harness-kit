@@ -87,6 +87,28 @@ case "$cmd" in
   queue-next)
     head -1 "$queue" 2>/dev/null
     ;;
+  queue-del)
+    [ -f "$queue" ] && { grep -vx "$1" "$queue" >"$queue.tmp"; mv "$queue.tmp" "$queue"; }
+    ;;
+  queue-front)
+    { echo "$1"; grep -vx "$1" "$queue" 2>/dev/null; } >"$queue.tmp"; mv "$queue.tmp" "$queue"
+    ;;
+  deps)
+    f=$(file "$1") || exit 2
+    field "$f" "Зависит от" | grep -oE 'B-[0-9]+' | while IFS= read -r d; do
+      s=$(field "$(file "$d")" Статус) || { echo "$d нет"; continue; }
+      case "$s" in принята|"в вехе"*) ;; *) echo "$d $s" ;; esac
+    done
+    ;;
+  area)
+    f=$(file "$1") || exit 2
+    a=$(field "$f" Область | tr ',' '\n' | sed 's/`//g; s/^ *//; s/ *$//' | grep .)
+    if [ -z "$a" ] || [ "$a" = "—" ]; then
+      p=$(field "$f" План); b=$(field "$f" Ветка)
+      [ -n "$p" ] && [ -n "$b" ] && a=$(git show "$b:$p" 2>/dev/null | grep -oE '`[^` ]+`' | tr -d '`' | grep -E '/|\.[a-z]{1,5}$' | grep -vE '^(docs/|https?:)' | sort -u)
+    fi
+    [ -n "$a" ] && [ "$a" != "—" ] && echo "$a" || echo '*'
+    ;;
   queue-pop)
     [ -f "$queue" ] && sed -i '' -e '1d' "$queue"
     ;;

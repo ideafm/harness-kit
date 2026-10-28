@@ -102,19 +102,21 @@ if [ -d "$root/docs/backlog" ]; then
     started=$(head -1 <<<"$last" | cut -d' ' -f1,2)
     ok=$(grep -c ' · на приёмке · ' <<<"$last")
     stuck=$(grep -c ' · застряла: ' <<<"$last")
+    busy=$(awk -F'\t' '$4 == "в работе" { print $1 }' <<<"$backlog")
     if CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" running; then
-      cur=$(grep -oE ' · B-[0-9]+ · старт в ' <<<"$last" | tail -1 | grep -oE 'B-[0-9]+')
-      run_st="идёт с $started${cur:+, сейчас $cur} (остановить: bash $PLUGIN/scripts/run.sh stop)"
+      run_st="идёт с $started${busy:+, сейчас $(tr '\n' ' ' <<<"$busy" | sed 's/ $//')} (остановить: bash $PLUGIN/scripts/run.sh stop)"
     else
-      run_st="последний с $started"
+      run_st="последний с $started"; busy=""
     fi
     echo "  прогон: $run_st · сделано $ok · застряло $stuck · ждёт приёмки $(count 'на приёмке')"
-    if [ -n "${cur:-}" ]; then
-      wt=$(get .runWorktree); wt=${wt:-.claude/worktrees/tw-run}
-      [[ "$wt" = /* ]] || wt="$root/$wt"
+    wt1=$(get .runWorktree); wt1=${wt1:-.claude/worktrees/tw-run}
+    [[ "$wt1" = /* ]] || wt1="$root/$wt1"
+    for cur in $busy; do
+      slot=$(grep -oE 'исполнитель [0-9]+' "$root/docs/backlog/$cur.md" | tail -1 | grep -oE '[0-9]+')
+      wt=$wt1; [ "${slot:-1}" != 1 ] && wt="$wt1-$slot"
       cur_plan=$(CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" get "$cur" План)
-      [ -n "$cur_plan" ] && [ -f "$wt/$cur_plan" ] && plan_block "$wt/$cur_plan" "$(plan_status "$wt/$cur_plan") · исполнитель, $cur"
-    fi
+      [ -n "$cur_plan" ] && [ -f "$wt/$cur_plan" ] && plan_block "$wt/$cur_plan" "$(plan_status "$wt/$cur_plan") · исполнитель ${slot:-1}, $cur"
+    done
   fi
   awk -F'\t' 'index($4, "застряла") == 1 { print "  " $1 " · " $4 }' <<<"$backlog" | perl -CSD -Mutf8 -pe 's/^(.{100}).+/$1…/'
 fi

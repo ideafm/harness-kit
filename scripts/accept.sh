@@ -202,16 +202,14 @@ if [ -n "$1" ]; then
   echo
   runs=$(ls "$state"/run/"$id"-*.jsonl 2>/dev/null)
   if [ -n "$runs" ]; then
-    wt=$(jq -r '.runWorktree // empty' "$root/.claude/tw.json" 2>/dev/null); wt=${wt:-.claude/worktrees/tw-run}
-    [[ "$wt" = /* ]] || wt="$root/$wt"
     echo "Исполнитель — заходы"
-    sid=""
+    sid=""; wt=""
     while IFS= read -r r; do
       line=$(grep '^{' "$r" | jq -rs '(map(select(.subtype=="init"))[0] // {}) as $i | (map(select(.type=="result"))[0] // {}) as $e | "\($i.session_id // "")\t\($i.model // "?") · ходов \($e.num_turns // "?") · $\(($e.total_cost_usd // 0) * 100 | round / 100) · \((($e.duration_ms // 0) / 60000) | floor) мин"' 2>/dev/null)
-      [ -n "${line%%$'\t'*}" ] && sid=${line%%$'\t'*}
+      [ -n "${line%%$'\t'*}" ] && { sid=${line%%$'\t'*}; wt=$(grep '^{' "$r" | jq -r 'select(.subtype=="init") | .cwd // empty' 2>/dev/null | head -1); }
       echo "  $(basename "$r" .jsonl | sed -E 's/^B-[0-9]+-//') · ${line#*$'\t'}"
     done <<<"$runs"
-    [ -n "$sid" ] && echo "  разговор последнего захода: cd ${wt/#$HOME/~} && claude --resume $sid"
+    [ -n "$sid" ] && echo "  разговор последнего захода: ${wt:+cd ${wt/#$HOME/~} && }claude --resume $sid"
     echo
   fi
   echo "Журнал задачи"

@@ -16,13 +16,21 @@ mode=${FAKE_MODE:-ok}
 if [ "$mode" = limit-once ]; then
   [ -f "$FAKE_LOG.limited" ] && mode=ok || { touch "$FAKE_LOG.limited"; mode=limit; }
 fi
-echo "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"$model\",\"session_id\":\"fake-$$\"}"
+echo "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"$model\",\"session_id\":\"fake-$$\",\"cwd\":\"$PWD\"}"
 echo "$model" >>"$FAKE_LOG"
 
 finish() { echo "{\"type\":\"result\",\"num_turns\":3,\"total_cost_usd\":0.01,\"duration_ms\":1000}"; exit 0; }
 close_plan() { perl -0pi -e 's/- \[ \] (\d+\.)/- [x] $1/g' "$plan"; }
 
+[ -n "$FAKE_LOG" ] && echo "$id slot=$TW_SLOT db=$TEST_DB" >>"$FAKE_LOG.env"
 case "$mode" in
+  slow)
+    sleep "${FAKE_SLEEP:-2}"
+    echo "work $model $id" >>"src/$id.txt"
+    close_plan
+    echo "green now" >"$state/last-test"
+    echo "ok now" >"$state/last-verify"
+    finish ;;
   ok)
     echo "work $model $id" >>src/app.txt
     close_plan
