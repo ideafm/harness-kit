@@ -109,6 +109,23 @@ case "$cmd" in
     fi
     [ -n "$a" ] && [ "$a" != "—" ] && echo "$a" || echo '*'
     ;;
+  next-id)
+    n=$(ls "$backlog"/B-*.md 2>/dev/null | sed -E 's/.*B-0*([0-9]+)\.md$/\1/' | sort -n | tail -1)
+    printf 'B-%03d\n' $(( ${n:-0} + 1 ))
+    ;;
+  milestones)
+    for f in "$backlog"/M*.md; do
+      [ -f "$f" ] || continue
+      m=$(basename "$f" .md)
+      tasks=$(grep -l -E "\*\*Веха:\*\* $m([^0-9]|$)" "$backlog"/B-*.md 2>/dev/null)
+      total=$(grep -c . <<<"$tasks"); done=0
+      for t in $tasks; do case "$(field "$t" Статус)" in принята|"в вехе"*) done=$((done + 1)) ;; esac; done
+      printf '%s\t%s\t%s/%s\t%s\n' "$m" "$(field "$f" Статус)" "$done" "$total" "$(head -1 "$f" | sed -E 's/^# M[0-9]+ · //')"
+    done
+    ;;
+  milestone-tasks)
+    grep -l -E "\*\*Веха:\*\* $1([^0-9]|$)" "$backlog"/B-*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.md$//'
+    ;;
   queue-pop)
     [ -f "$queue" ] && sed -i '' -e '1d' "$queue"
     ;;
@@ -130,8 +147,15 @@ case "$cmd" in
     f=$(file "$id") || exit 2
     for p in "$spec" "$plan"; do [ -f "$root/$p" ] || { echo "нет файла $p" >&2; exit 2; }; done
     branch="tw/$id"
+    from=$(base)
+    m=$(field "$f" Веха | grep -oE '^M[0-9]+')
+    if [ -n "$m" ]; then
+      [ -f "$backlog/$m.md" ] || { echo "нет вехи $m (docs/backlog/$m.md)" >&2; exit 2; }
+      git rev-parse -q --verify "refs/heads/tw/$m" >/dev/null || git branch "tw/$m" "$from" || exit 2
+      from="tw/$m"
+    fi
     if ! git rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
-      git branch "$branch" "$(base)" || exit 2
+      git branch "$branch" "$from" || exit 2
       old=$(ls "$state/run/$id"-*.jsonl "$state/run/$id".* 2>/dev/null)
       [ -n "$old" ] && mkdir -p "$state/run/old" && mv $old "$state/run/old/"
     fi

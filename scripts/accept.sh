@@ -63,6 +63,90 @@ merge_check() {
   git -C "$awt" checkout -q --detach "$base"
   echo "tw: на результате слияния проверки зелёные"
 }
+if [[ "$2" =~ ^M[0-9]+$ ]] && [[ "$1" =~ ^(merge|rework|reject)$ ]]; then
+  action=$1; id=$2; note=$3; branch="tw/$id"
+  bash "$B" get "$id" Статус >/dev/null || exit 2
+  git rev-parse -q --verify "refs/heads/$branch" >/dev/null || { echo "tw: нет ветки вехи $branch"; exit 2; }
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  case "$action" in
+    merge)
+      [ "$(git symbolic-ref -q --short HEAD)" = "$base" ] || { echo "tw: для слияния папка проекта должна стоять на $base (сейчас: $(git branch --show-current))"; exit 3; }
+      bash "$B" clean || { echo "tw: в папке проекта незакоммиченные правки — закоммить или убери их:"; git status --short --untracked-files=no -- . ':!docs/backlog'; exit 3; }
+      busy=$(for t in $(bash "$B" milestone-tasks "$id"); do s=$(bash "$B" get "$t" Статус); case "$s" in (принята|"в вехе"*|отклонена*) ;; (*) echo "$t ($s)" ;; esac; done)
+      [ -z "$busy" ] || { echo "tw: в вехе $id ещё не готовы задачи: $(tr '\n' ' ' <<<"$busy")— сливать рано"; exit 3; }
+      if ! git merge-tree --write-tree --name-only "$base" "$branch" >"$tmp/conflict" 2>&1; then
+        echo "tw: $branch конфликтует с $base в файлах:"
+        sed -n '2,/^$/p' "$tmp/conflict" | grep . | sed 's/^/  /'
+        exit 4
+      fi
+      merge_check || exit 5
+      git merge -q --no-ff "$branch" -m "feat: merge milestone $id" || { git merge --abort 2>/dev/null; echo "tw: слияние не прошло, $base не изменён"; exit 4; }
+      for t in $(bash "$B" milestone-tasks "$id"); do
+        case "$(bash "$B" get "$t" Статус)" in "в вехе"*) bash "$B" set "$t" Статус принята "веха $id слита в $base" ;; esac
+      done
+      bash "$B" set "$id" Статус принята "слита в $base"
+      git branch -q -D "$branch" && echo "tw: веха $id слита в $base, ветка $branch удалена"
+      ;;
+    rework)
+      [ -n "$note" ] || { echo "tw: что доработать? accept.sh rework $id \"текст\""; exit 2; }
+      new=$(bash "$B" next-id)
+      {
+        echo "# $new · Доработка вехи $id: $note"
+        echo
+        echo "- **Статус:** входящая"
+        echo "- **Приоритет:** P1 · **Размер:** S · **Категория:** доработка"
+        echo "- **Веха:** $id"
+        echo "- **Область:** —"
+        echo "- **Зависит от:** —"
+        echo "- **Готово, когда:** $note — сделано и проверено"
+        echo "- **Источник:** приёмка вехи $id"
+        echo "- **Спека:** — · **План:** — · **Ветка:** —"
+        echo
+        echo "## Журнал"
+        echo
+        echo "- $(date +%F) · создана при приёмке вехи $id"
+      } >"$root/docs/backlog/$new.md"
+      bash "$B" set "$id" Статус открыта "доработка $new: $note"
+      echo "tw: $new — доработка вехи $id, статус входящая. Подготовка и очередь — /tw:run."
+      ;;
+    reject)
+      [ -n "$note" ] || { echo "tw: почему отклоняем? accept.sh reject $id \"причина\""; exit 2; }
+      bash "$B" set "$id" Статус "отклонена: $note"
+      echo "tw: веха $id отклонена, ветка $branch осталась"
+      ;;
+  esac
+  exit 0
+fi
+if [ -n "$1" ] && [[ "$1" =~ ^M[0-9]+$ ]]; then
+  id=$1; branch="tw/$id"; f="$root/docs/backlog/$id.md"
+  [ -f "$f" ] || { echo "tw: нет вехи $id в docs/backlog/"; exit 0; }
+  tasks=$(bash "$B" milestone-tasks "$id")
+  echo "[tw · 5/5 приёмка] Веха $id · $(head -1 "$f" | sed -E 's/^# M[0-9]+ · //')" | wrap
+  echo
+  echo "Статус: $(bash "$B" get "$id" Статус) · ветка $branch$(git rev-parse -q --verify "refs/heads/$branch" >/dev/null && echo " · коммитов против $base: $(git rev-list --count "$base..$branch")")"
+  for k in Цель "Как посмотреть"; do v=$(bash "$B" get "$id" "$k"); [ -n "$v" ] && echo "$k: $v"; done | wrap
+  echo
+  echo "Задачи"
+  for t in $tasks; do
+    v=$(sed -n 's/^verify: [a-z]* [0-9-]* [0-9:]* · //p' "$state/run/$t.checks" 2>/dev/null | sed 's/ · [^·]*$//')
+    echo "  $t · $(bash "$B" get "$t" Статус)${v:+ · проверяющий $v} · $(head -1 "$root/docs/backlog/$t.md" | sed -E 's/^# B-[0-9]+ · //')"
+  done | wrap
+  echo
+  echo "На тебе — машина проверить не может"
+  for t in $tasks; do
+    [ -f "$state/run/$t.verify" ] && jq -r --arg t "$t" '.items[] | select(.verdict=="человек") | "  - \($t): \(.item) — \(.evidence)"' "$state/run/$t.verify" 2>/dev/null
+    p=$(bash "$B" get "$t" План)
+    [ -n "$p" ] && [ "$p" != "—" ] && git show "$branch:$p" 2>/dev/null | sed -n '/^## Приёмка/,/^## /p' | grep -E '^- \[ \].*\[человек\]' | sed "s/^- \[ \] /  - $t: /"
+  done | wrap | grep . || echo "  - ничего: всё проверено машиной"
+  echo
+  echo "Изменения против $base"
+  git diff --stat "$base...$branch" -- . ':!docs' 2>/dev/null | tail -1 | sed 's/^/  /' | grep . || echo "  код не менялся"
+  echo
+  echo "Решение: принять веху и слить в $base / посмотреть / доработать (новая задача в веху) / отклонить."
+  echo "Сейчас папка проекта: $(git branch --show-current) · $(bash "$B" clean && echo чистая || echo 'есть незакоммиченные правки')"
+  exit 0
+fi
 if [ -n "$1" ] && [ -n "$2" ] && [[ "$1" =~ ^(merge|rework|reject|rebase|ui)$ ]]; then
   action=$1; id=$2; note=$3
   bash "$B" get "$id" Статус >/dev/null || exit 2
@@ -131,6 +215,13 @@ if [ -n "$1" ] && [ -n "$2" ] && [[ "$1" =~ ^(merge|rework|reject|rebase|ui)$ ]]
 fi
 
 if [ -z "$1" ]; then
+  ms=$(bash "$B" milestones | awk -F'\t' '$2 == "на приёмке"')
+  if [ -n "$ms" ]; then
+    echo "[tw · 5/5 приёмка] Вехи на приёмке"
+    echo
+    while IFS=$'\t' read -r m st n title; do echo "  $m · задач $n · $title"; done <<<"$ms" | wrap
+    echo
+  fi
   pending=$(bash "$B" list | awk -F'\t' '$4 == "на приёмке"')
   if [ -n "$pending" ]; then
     echo "[tw · 5/5 приёмка] Задачи бэклога на приёмке"

@@ -10,7 +10,7 @@ ok() { pass=$((pass + 1)); printf '  \033[32m✓\033[0m %s\n' "$1"; }
 bad() { fail=$((fail + 1)); printf '  \033[31m✗\033[0m %s\n' "$1"; [ -n "$2" ] && sed 's/^/      /' <<<"$2" | head -15; }
 check() { local name=$1; shift; if "$@" >/dev/null 2>&1; then ok "$name"; else bad "$name" "$(tail -5 "$P/.claude/tw-state/run.log" 2>/dev/null)"; fi; }
 is() { [ "$1" = "$2" ] || { echo "ожидалось «$2», получено «$1»" >&2; return 1; }; }
-has() { grep -q -- "$2" <<<"$1"; }
+has() { grep -qF -- "$2" <<<"$1"; }
 
 fixture() {
   P="$work/$1/proj"
@@ -36,12 +36,17 @@ task() {
 - **Готово, когда:** работает
 - **Область:** ${AREA:-—}
 - **Зависит от:** ${DEPS:-—}
+- **Веха:** ${MS:-—}
 - **Спека:** — · **План:** — · **Ветка:** —
 
 ## Журнал
 
 - 2026-01-01 · создана
 EOF
+}
+
+milestone() {
+  printf '# %s · Первая веха\n\n- **Статус:** открыта\n- **Цель:** можно потрогать\n- **Как посмотреть:** pnpm dev\n\n## Журнал\n\n' "$1" >"docs/backlog/$1.md"
 }
 
 prepare() {
@@ -280,6 +285,44 @@ if scenario stop-many; then
   check "обе вернулись в очередь" is "$(tw backlog.sh queue | sort | tr '\n' ' ')" "B-001 B-002 "
   check "у обеих wip-коммиты" bash -c "git log --format=%s -1 tw/B-001 | grep -q wip && git log --format=%s -1 tw/B-002 | grep -q wip"
   check "дерево claude погашено" bash -c "! pgrep -f '$K/tests/fakebin/claude'"
+fi
+
+if scenario milestone; then
+  fixture milestone
+  milestone M1
+  MS=M1 AREA='`src/a`' prepare B-001 >/dev/null
+  MS=M1 AREA='`src/b`' DEPS=B-001 prepare B-002 >/dev/null
+  check "ветка задачи от ветки вехи" git merge-base --is-ancestor tw/M1 tw/B-001
+  FAKE_MODE=slow FAKE_SLEEP=0 run B-001 B-002
+  check "обе задачи в вехе" is "$(st B-001) | $(st B-002)" "в вехе M1 | в вехе M1"
+  check "веха готова к приёмке" is "$(st M1)" "на приёмке"
+  check "в ветке вехи работа обеих" bash -c "git show tw/M1:src/B-001.txt >/dev/null && git show tw/M1:src/B-002.txt >/dev/null"
+  check "вторая задача начинала с первой" grep -q 'исполнитель' docs/backlog/B-002.md
+  check "ветки задач удалены" bash -c "! git rev-parse -q --verify refs/heads/tw/B-001 && ! git rev-parse -q --verify refs/heads/tw/B-002"
+  check "main не тронут" untouched
+  check "уведомление о вехе" grep -q 'Веха M1 готова к приёмке' "$FAKE_LOG.notify"
+  card=$(tw accept.sh M1)
+  check "карточка вехи" has "$card" "B-002 · в вехе M1"
+  check "список приёмки показывает веху" has "$(tw accept.sh)" "M1 · задач 2/2"
+  tw accept.sh merge M1 >/dev/null
+  check "веха слита" is "$(st M1) | $(st B-001) | $(st B-002)" "принята | принята | принята"
+  check "в main работа вехи" bash -c "[ -f src/B-001.txt ] && [ -f src/B-002.txt ]"
+  check "ветка вехи удалена" bash -c "! git rev-parse -q --verify refs/heads/tw/M1"
+fi
+
+if scenario milestone-red; then
+  fixture milestone-red
+  printf '{"check": "! grep -q BREAK src/other.txt"}\n' >.claude/tw.json
+  milestone M1
+  MS=M1 prepare B-001 >/dev/null
+  before=$(git rev-parse tw/M1)
+  FAKE_MODE=breaks run B-001
+  check "красная веха — задача застряла" has "$(st B-001)" "на вехе M1 после слияния проверки красные"
+  check "ветка вехи не сдвинулась" is "$(git rev-parse tw/M1)" "$before"
+  check "ветка задачи осталась" git rev-parse -q --verify refs/heads/tw/B-001
+  check "веха открыта" is "$(st M1)" открыта
+  tw accept.sh rework M1 "добавить экспорт" >/dev/null
+  check "доработка вехи — новая задача" is "$(tw backlog.sh get B-002 Веха)" M1
 fi
 
 if scenario stop-hook; then
