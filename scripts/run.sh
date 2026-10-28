@@ -14,6 +14,16 @@ pidfile="$state/run.pid"
 mkdir -p "$runs"
 
 say() { echo "$(date '+%F %T') · $*" | tee -a "$log"; }
+notify() {
+  [ "$(jq -r '.runNotify' "$root/.claude/tw.json" 2>/dev/null)" = false ] && return 0
+  osascript -e 'on run a' -e 'display notification (item 1 of a) with title (item 2 of a)' -e 'end run' "$1" "tw · $(basename "$root")" >/dev/null 2>&1
+}
+summary() {
+  local m=$((($(date +%s) - run_started) / 60))
+  say "итог · на приёмке $ok_count · застряло $stuck_count · \$$(printf '%.2f' "$cost_total") · $m мин"
+  notify "Прогон закончен: на приёмке $ok_count, застряло $stuck_count, \$$(printf '%.2f' "$cost_total"), $m мин${1:+ · $1}"
+}
+halt() { say "$1"; summary "$1"; exit 1; }
 
 if [ "$1" = stop ]; then
   bash "$B" running || { echo "исполнитель не идёт"; exit 0; }
@@ -110,6 +120,7 @@ stopped() {
     bash "$B" set "$id" Статус готова "прогон остановлен посреди задачи"
   fi
   say "остановлен"
+  summary "остановлен"
   exit 143
 }
 
@@ -165,9 +176,12 @@ EOF
 stuck() {
   bash "$B" set "$1" Статус "застряла: $2" "исполнитель"
   say "$1 · застряла: $2"
+  stuck_count=$((stuck_count + 1))
+  notify "$1 застряла: $2"
 }
 
 done_count=0
+ok_count=0; stuck_count=0; cost_total=0; run_started=$(date +%s)
 env_fails=0
 cpid=""; id=""; untracked=""
 trap stopped TERM INT
@@ -178,14 +192,14 @@ ensure_worktree || { say "не удалось создать worktree $wt — с
 while id=$(bash "$B" queue-next) && [ -n "$id" ]; do
   [ "$max" -gt 0 ] && [ "$done_count" -ge "$max" ] && { say "достигнут предел $max задач"; break; }
   wait_limits
-  ensure_worktree || { say "worktree пропал и не создаётся — стоп"; exit 1; }
+  ensure_worktree || halt "worktree пропал и не создаётся — стоп"
 
   if [ -n "$(dirty)" ]; then
     if w symbolic-ref -q HEAD >/dev/null; then
       wip /dev/null "$(w branch --show-current | sed 's#^tw/##')"
       say "в worktree оставались правки — сохранены wip-коммитом в $(w branch --show-current)"
     else
-      say "в worktree незакоммиченные правки вне ветки — стоп, разберись: $wt"; exit 1
+      halt "в worktree незакоммиченные правки вне ветки — стоп, разберись: $wt"
     fi
   fi
   release 2>/dev/null
@@ -209,7 +223,7 @@ while id=$(bash "$B" queue-next) && [ -n "$id" ]; do
     stuck "$id" "сбой окружения: установка зависимостей (лог: ${wstate#"$root"/}/install.log)"
     bash "$B" queue-pop
     env_fails=$((env_fails + 1))
-    [ "$env_fails" -ge 2 ] && { say "два сбоя окружения подряд — стоп"; exit 1; }
+    [ "$env_fails" -ge 2 ] && halt "два сбоя окружения подряд — стоп"
     continue
   fi
 
@@ -228,6 +242,8 @@ while id=$(bash "$B" queue-next) && [ -n "$id" ]; do
   wait "$cpid"
   cpid=""
   save_limits "$out"
+  task_cost=$(grep '^{' "$out" | jq -s '[.[] | select(.type == "result") | .total_cost_usd // 0] | add // 0' 2>/dev/null)
+  cost_total=$(awk -v a="$cost_total" -v b="${task_cost:-0}" 'BEGIN { print a + b }')
 
   if hit_limit "$out"; then
     say "$id · упёрлись в лимит посреди задачи — пауза и повтор"
@@ -252,12 +268,12 @@ while id=$(bash "$B" queue-next) && [ -n "$id" ]; do
       w commit -qm "feat: resolve backlog item $id" >/dev/null 2>&1
       release
       bash "$B" set "$id" Статус "на приёмке" "проверки зелёные, проверяющий подтвердил"
-      say "$id · на приёмке · $title"; env_fails=0 ;;
+      say "$id · на приёмке · \$$(printf '%.2f' "${task_cost:-0}") · $title"; env_fails=0; ok_count=$((ok_count + 1)) ;;
     env:*)
       wip "$untracked" "$id"; release
       stuck "$id" "${res#env:}"
       env_fails=$((env_fails + 1))
-      [ "$env_fails" -ge 2 ] && { bash "$B" queue-pop; say "два сбоя окружения подряд — стоп"; exit 1; } ;;
+      [ "$env_fails" -ge 2 ] && { bash "$B" queue-pop; halt "два сбоя окружения подряд — стоп"; } ;;
     *)
       wip "$untracked" "$id"; release
       reason=${res#stuck:}
@@ -276,6 +292,7 @@ while id=$(bash "$B" queue-next) && [ -n "$id" ]; do
 done
 
 say "конец · обработано: $done_count"
+summary
 }
 
 main "$@"

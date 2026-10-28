@@ -1,0 +1,7 @@
+#!/bin/bash
+args=()
+while [ $# -gt 0 ]; do
+  [ "$1" = -e ] && { shift 2; continue; }
+  args+=("$1"); shift
+done
+echo "${args[*]}" >>"$FAKE_LOG.notify"

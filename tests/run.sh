@@ -16,7 +16,7 @@ fixture() {
   P="$work/$1/proj"
   mkdir -p "$P/src" "$P/.claude" "$P/docs/backlog" "$P/docs/specs" "$P/docs/plans"
   export FAKE_LOG="$work/$1/models"
-  : >"$FAKE_LOG"
+  : >"$FAKE_LOG"; : >"$FAKE_LOG.notify"
   cd "$P" || exit 1
   git init -q -b main
   echo base >src/app.txt
@@ -79,6 +79,9 @@ if scenario ok; then
   check "папка не тронута" untouched
   check "итог проверок сохранён" grep -q 'test: green' .claude/tw-state/run/B-001.checks
   check "карточка показывает заходы" has "$(tw accept.sh B-001)" "sonnet · ходов 3"
+  check "стоимость задачи в run.log" grep -q 'B-001 · на приёмке · \$0.01' .claude/tw-state/run.log
+  check "итог прогона в run.log" grep -q 'итог · на приёмке 1 · застряло 0 · \$0.01' .claude/tw-state/run.log
+  check "уведомление об итоге" grep -q 'Прогон закончен: на приёмке 1, застряло 0' "$FAKE_LOG.notify"
 fi
 
 if scenario escalate; then
@@ -98,6 +101,8 @@ if scenario red; then
   check "повтор был один" is "$(tr '\n' ' ' <"$FAKE_LOG")" "sonnet opus "
   check "незакоммиченное ушло wip-коммитом" has "$(git log --format=%s tw/B-001 -1)" "chore: wip backlog item B-001"
   check "папка не тронута" untouched
+  check "уведомление о застрявшей" grep -q 'B-001 застряла: красные проверки' "$FAKE_LOG.notify"
+  check "итог считает застрявшие" grep -q 'итог · на приёмке 0 · застряло 1' .claude/tw-state/run.log
 fi
 
 if scenario human; then
@@ -157,6 +162,7 @@ if scenario stop; then
   check "и первая в очереди" is "$(tw backlog.sh queue-next)" B-001
   check "wip-коммит в ветке" has "$(git log --format=%s tw/B-001 -1)" "chore: wip backlog item B-001"
   check "дерево claude погашено" bash -c "! pgrep -f '$K/tests/fakebin/claude'"
+  check "итог при остановке" grep -q 'Прогон закончен.*остановлен' "$FAKE_LOG.notify"
   check "исполнитель не идёт" bash -c "! CLAUDE_PROJECT_DIR='$P' bash '$K/scripts/backlog.sh' running"
 fi
 
