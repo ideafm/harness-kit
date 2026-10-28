@@ -73,9 +73,11 @@ ${diff:-нет}"
 
 ${checks%$'\n\n'}"
 
+  vsettings=$(jq -c '{enabledPlugins: ((.enabledPlugins // {}) | map_values(false))}' "$HOME/.claude/settings.json" 2>/dev/null || echo '{}')
+  [ -n "$TW_CC_SANDBOX" ] && vsettings=$(jq -c --argjson sb "$TW_CC_SANDBOX" '. + $sb' <<<"$vsettings")
   out=$(cd "$TW_ROOT" && TW_NESTED=1 claude -p "$prompt" --model "$model" \
     --strict-mcp-config --no-session-persistence --permission-mode default \
-    --settings "$(jq -c '{enabledPlugins: ((.enabledPlugins // {}) | map_values(false))}' "$HOME/.claude/settings.json" 2>/dev/null || echo '{}')" \
+    --settings "$vsettings" \
     --allowedTools "${tools[@]}" \
     --disallowedTools Edit Write NotebookEdit \
     --output-format json --json-schema "$task_schema" </dev/null 2>/dev/null)

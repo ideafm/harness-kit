@@ -76,14 +76,21 @@ setup=$(tw_get .setup)
 teardown=$(tw_get .teardown)
 env_file="$TW_STATE/env"
 run_setup() {
+  [ -n "$TW_SANDBOX" ] && env_fail "окружение упало, а исполнитель не поднимает его из ветки задачи" "$setup" test.log
   (cd "$TW_ROOT" && eval "$setup") >"$TW_STATE/setup.log" 2>&1 || env_fail "setup упал" "$setup" setup.log
   echo "$sid $(date '+%Y-%m-%d %H:%M')" >"$env_file"
   stage "окружение поднято ($setup)${teardown:+ — остаётся работать, остановить: $teardown}"
 }
-run_check() { (cd "$TW_ROOT" && NO_COLOR=1 FORCE_COLOR=0 eval "$test_cmd") >"$log" 2>&1; }
+run_check() {
+  if [ -n "$TW_SANDBOX" ]; then
+    (cd "$TW_ROOT" && NO_COLOR=1 FORCE_COLOR=0 "$TW_SRT" -s "$TW_SANDBOX" -c "$test_cmd") >"$log" 2>&1
+  else
+    (cd "$TW_ROOT" && NO_COLOR=1 FORCE_COLOR=0 eval "$test_cmd") >"$log" 2>&1
+  fi
+}
 
 fresh_setup=0
-if [ -n "$setup" ] && [ "$(cut -d' ' -f1 "$env_file" 2>/dev/null)" != "$sid" ]; then
+if [ -n "$setup" ] && [ -z "$TW_SANDBOX" ] && [ "$(cut -d' ' -f1 "$env_file" 2>/dev/null)" != "$sid" ]; then
   run_setup
   fresh_setup=1
 fi

@@ -11,6 +11,7 @@ bad() { fail=$((fail + 1)); printf '  \033[31m✗\033[0m %s\n' "$1"; [ -n "$2" ]
 check() { local name=$1; shift; if "$@" >/dev/null 2>&1; then ok "$name"; else bad "$name" "$(tail -5 "$P/.claude/tw-state/run.log" 2>/dev/null)"; fi; }
 is() { [ "$1" = "$2" ] || { echo "ожидалось «$2», получено «$1»" >&2; return 1; }; }
 has() { grep -qF -- "$2" <<<"$1"; }
+not() { ! "$@"; }
 
 fixture() {
   P="$work/$1/proj"
@@ -122,6 +123,100 @@ if scenario human; then
   check "без повтора на opus" is "$(cat "$FAKE_LOG")" sonnet
 fi
 
+if scenario denied; then
+  fixture denied
+  prepare B-001 >/dev/null
+  FAKE_MODE=denied run B-001
+  check "запрет команды — в причине" has "$(st B-001)" 'нет разрешения на `bash deploy/t.sh`'
+  check "запрет без повтора на opus" is "$(cat "$FAKE_LOG")" sonnet
+  check "составные запреты отброшены" is "$(cat .claude/tw-state/run/B-001.denied)" "bash deploy/t.sh"
+  out=$(tw status.sh)
+  check "status: застрявшая в «Ждут тебя»" has "$out" "B-001 · застряла"
+  check "status: подсказка про runAllow" has "$out" "Bash(bash deploy/t.sh)"
+  check "status: разговор исполнителя" has "$out" "claude --resume fake-"
+  check "status: команды" has "$out" "/tw:accept B-001"
+  check "status: повтор с номером" has "$out" "/tw:run B-001"
+  check "status: без таблицы конвейера" not has "$out" "Pipeline"
+  check "status full: таблица конвейера" has "$(tw status.sh full)" "Pipeline"
+  check "карточка: попробовать руками" has "$(tw accept.sh B-001)" "look B-001"
+  printf '{"check": "true", "runInstall": "true"}\n' >.claude/tw.json
+  out=$(tw accept.sh look B-001)
+  check "look: папка на коде ветки" is "$(git -C .claude/worktrees/tw-look rev-parse HEAD)" "$(git rev-parse tw/B-001)"
+  check "look: путь в ответе" has "$out" "cd "
+  check "look: папка проекта не тронута" untouched
+fi
+
+if scenario sandbox; then
+  fixture sandbox
+  touch pnpm-lock.yaml
+  mkdir -p apps/api
+  printf '{"scripts": {"test": "x", "dev": "x", "infra:up": "x", "lint": "x"}}\n' >package.json
+  printf '{"scripts": {"test:watch": "x", "typecheck": "x", "deploy": "x"}}\n' >apps/api/package.json
+  printf '{"check": "true", "runInstall": "true", "setup": "echo up >%s/setup.ran", "runAllow": ["Bash(bash deploy/t.sh)"]}\n' "$work/sandbox" >.claude/tw.json
+  git add -A && git -c user.name=t -c user.email=t@t commit -qm pkg
+  prepare B-001 >/dev/null
+  run B-001
+  a=$(cat "$FAKE_LOG.args")
+  check "pnpm test разрешён" has "$a" "Bash(pnpm test)"
+  check "typecheck пакета через --filter" has "$a" "Bash(pnpm --filter * typecheck *)"
+  check "vitest через exec" has "$a" "Bash(pnpm exec vitest *)"
+  check "dev не разрешён" not has "$a" "pnpm dev"
+  check "infra не разрешён" not has "$a" "infra:up"
+  check "watch не разрешён" not has "$a" "test:watch"
+  check "deploy не разрешён" not has "$a" "deploy)"
+  check "pnpm целиком не разрешён" not has "$a" "Bash(pnpm:*)"
+  check "runAllow добавлен" has "$a" "Bash(bash deploy/t.sh)"
+  check "песочница включена" has "$a" '"sandbox":{"enabled":true'
+  check "сеть закрыта" has "$a" '"allowedDomains":[]'
+  check "~/.ssh закрыт на чтение" has "$a" "$HOME/.ssh"
+  check "окружение поднято до исполнителей" test -f "$work/sandbox/setup.ran"
+  check "в журнале прогона" grep -q "окружение поднято" .claude/tw-state/run.log
+  check "профиль srt на исполнителя" test -f .claude/tw-state/sandbox/1.json
+  check "srt: запись только в worktree" is "$(jq -r '.filesystem.allowWrite[0]' .claude/tw-state/sandbox/1.json)" "$P/.claude/worktrees/tw-run"
+  check "srt: секреты закрыты" has "$(jq -c '.filesystem.denyRead' .claude/tw-state/sandbox/1.json)" "$HOME/.ssh"
+  printf '{"check": "true", "runInstall": "true", "runSandbox": false}\n' >.claude/tw.json
+  prepare B-002 >/dev/null
+  run B-002
+  check "runSandbox: false — без песочницы" bash -c "! grep -q sandbox '$FAKE_LOG.args'"
+  printf '{"check": "true", "runInstall": "true"}\n' >.claude/tw.json
+  task B-004; prepare B-004 >/dev/null
+  TW_SRT_BIN=/nonexistent run B-004
+  check "нет srt — исполнитель не стартует" has "$(cat .claude/run.out)" "нет srt"
+  check "нет srt — задача не тронута" is "$(st B-004)" готова
+  tw backlog.sh queue-del B-004 >/dev/null
+  printf '{"check": "true", "runInstall": "true", "setup": "false"}\n' >.claude/tw.json
+  prepare B-003 >/dev/null
+  run B-003
+  check "окружение упало — стоп" grep -q "окружение не поднялось" .claude/tw-state/run.log
+  check "задача не начата" is "$(st B-003)" готова
+fi
+
+if scenario deps-guard; then
+  fixture deps-guard
+  printf '{"check": "true", "runInstall": "echo installed >>%s/installs"}\n' "$work/deps-guard" >.claude/tw.json
+  printf '{"name": "p", "scripts": {"test": "x"}, "dependencies": {"a": "1"}}\n' >package.json
+  git add -A && git -c user.name=t -c user.email=t@t commit -qm pkg
+  prepare B-001 >/dev/null
+  run B-001
+  check "те же зависимости — установка идёт" grep -q installed "$work/deps-guard/installs"
+  tw backlog.sh deps-changed .claude/worktrees/tw-run main >"$work/deps-guard/none"
+  check "deps-changed: пусто без правок" is "$(cat "$work/deps-guard/none")" ""
+  printf '{"name": "p", "scripts": {"test": "y"}, "dependencies": {"a": "1"}}\n' >.claude/worktrees/tw-run/package.json
+  check "правка scripts — не зависимости" is "$(tw backlog.sh deps-changed .claude/worktrees/tw-run main)" ""
+  printf '{"name": "p", "dependencies": {"a": "1", "evil": "6.6.6"}}\n' >.claude/worktrees/tw-run/package.json
+  echo x >.claude/worktrees/tw-run/.npmrc
+  check "правка dependencies и .npmrc замечена" is "$(tw backlog.sh deps-changed .claude/worktrees/tw-run main | sort | tr '\n' ' ')" ".npmrc package.json "
+  out=$(tw backlog.sh wt-deps .claude/worktrees/tw-run main); rc=$?
+  check "wt-deps отказывает с кодом 3" is "$rc" 3
+  check "wt-deps называет файлы" has "$out" "ветка меняет зависимости (.npmrc package.json)"
+  git -C .claude/worktrees/tw-run checkout -q -- package.json; rm .claude/worktrees/tw-run/.npmrc
+  task B-002; prepare B-002 >/dev/null
+  printf '{"name": "p", "dependencies": {"a": "2"}}\n' >"$work/deps-guard/pkg"
+  tw backlog.sh commit-to tw/B-002 "chore: bump" "package.json=$work/deps-guard/pkg" >/dev/null
+  run B-002
+  check "ветка с новыми зависимостями застряла" has "$(st B-002)" "ветка меняет зависимости (package.json)"
+fi
+
 if scenario noverify; then
   fixture noverify
   prepare B-001 >/dev/null
@@ -211,6 +306,7 @@ if scenario merge-check; then
   head=$(git rev-parse HEAD)
   out=$(tw accept.sh merge B-001)
   check "красное слияние — отказ" is "$?" 5
+  check "проверка слияния через srt" grep -q "tw-accept · .*sandbox/accept.json" "$FAKE_LOG.srt"
   check "причина в выводе" has "$out" "проверки красные"
   check "main не тронут" is "$(git rev-parse HEAD)" "$head"
   check "статус остался на приёмке" is "$(st B-001)" "на приёмке"
@@ -241,7 +337,13 @@ if scenario parallel; then
   AREA='`src/b`' prepare B-002 >/dev/null
   AREA='`src/c`' prepare B-003 >/dev/null
   AREA='`src/a/deep`' prepare B-004 >/dev/null
-  FAKE_MODE=slow FAKE_SLEEP=2 run B-001 B-002 B-003 B-004
+  FAKE_MODE=slow FAKE_SLEEP=2 run B-001 B-002 B-003 B-004 &
+  sleep 1.5
+  live=$(tw status.sh)
+  wait
+  check "status во время прогона: три в работе" has "$live" "в работе: 3"
+  check "status: исполнитель и план" has "$live" "B-002 · исполнитель 2 · sonnet"
+  check "status: остановить" has "$live" "run.sh stop"
   check "все четыре на приёмке" is "$(for i in 1 2 3 4; do st B-00$i; done | sort -u)" "на приёмке"
   starts=$(grep -n 'старт в' .claude/tw-state/run.log | cut -d: -f1 | head -3 | tr '\n' ' ')
   first_done=$(grep -n 'на приёмке' .claude/tw-state/run.log | head -1 | cut -d: -f1)
@@ -295,6 +397,7 @@ if scenario epic; then
   check "ветка задачи от ветки эпика" git merge-base --is-ancestor tw/E1 tw/B-001
   FAKE_MODE=slow FAKE_SLEEP=0 run B-001 B-002
   check "обе задачи в эпике" is "$(st B-001) | $(st B-002)" "в эпике E1 | в эпике E1"
+  check "проверка эпика через srt" grep -q "tw-run.* · .*sandbox/[0-9].json" "$FAKE_LOG.srt"
   check "эпик готов к приёмке" is "$(st E1)" "на приёмке"
   check "в ветке эпика работа обеих" bash -c "git show tw/E1:src/B-001.txt >/dev/null && git show tw/E1:src/B-002.txt >/dev/null"
   check "вторая задача начинала с первой" grep -q 'исполнитель' docs/backlog/B-002.md
@@ -335,6 +438,13 @@ if scenario stop-hook; then
   echo code >>src/app.txt
   out=$(echo '{"session_id":"t"}' | CLAUDE_PROJECT_DIR="$P" bash "$K/hooks/stop.sh")
   check "правка кода запускает проверки" has "$out" "tw ▸ тесты"
+  printf '{"check": "echo checked", "setup": "echo setup >%s/setup.ran"}\n' "$work/stop-hook" >.claude/tw.json
+  printf '{}\n' >"$work/stop-hook/profile.json"
+  echo more >>src/app.txt
+  rm -f .claude/tw-state/checked
+  echo '{"session_id":"t2"}' | CLAUDE_PROJECT_DIR="$P" TW_SANDBOX="$work/stop-hook/profile.json" TW_SRT="$K/tests/fakebin/srt" bash "$K/hooks/stop.sh" >/dev/null
+  check "у исполнителя check идёт через srt" grep -q "echo checked" "$FAKE_LOG.srt"
+  check "у исполнителя setup из ветки не запускается" test ! -f "$work/stop-hook/setup.ran"
 fi
 
 echo

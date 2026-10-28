@@ -56,23 +56,6 @@ prettier="✗ нет prettier в проекте"
 comments="комментарии запрещены"
 [ "$(get .noComments)" = "false" ] && comments="комментарии разрешены"
 
-echo "tw · ${root/#$HOME/~}"
-echo
-echo "Pipeline: цель → спецификация → план → loop → проверка → приёмка"
-echo
-row "$(mark skill spec)" "Цель → спецификация" "skill tw:spec" "спецификаций: $specs${last_spec:+ · последняя: $(basename "$last_spec")}"
-row "$(mark skill plan)" "Спецификация → план" "skill tw:plan" "планов: $plans_open открыто, $plans_done готово"
-row "$(mark hook Stop)" "Loop до зелёных тестов" "Stop-hook" "${check_cmd:-${test_cmd:-тестов пока нет}} · кругов ${max:-3}, потом субагент → человек"
-[ -n "$(get .setup)" ] && row "$(mark hook Stop)" "Окружение" "Stop-hook" "$(get .setup) · $( [ -n "$env_st" ] && echo "поднято tw $env_st" || echo "ещё не поднималось")${teardown:+ · остановить: $teardown}"
-row "$(mark hook Stop)" "Проверка" "Stop-hook" "последний прогон: ${last_test:-ещё не было}"
-row "$(mark hook Stop)" "Scope" "Stop-hook" "diff против плана и «Не трогаем»${last_scope:+ · $last_scope}"
-row "$(mark hook Stop)" "Независимая проверка" "Stop-hook" "свежий claude (${verify_model:-sonnet}) по спеке и diff${last_verify:+ · $last_verify}"
-row "$(mark skill accept)" "Приёмка человеком" "/tw:accept" "карточка: вердикты, допущения, пункты [человек], diff"
-row "·" "Перепланирование" "правило в tw:plan" "сначала правка плана и строка в журнале"
-row "$(mark hook SessionStart)" "Ledger / память" "SessionStart + план" "план = ledger: статус, [x] после проверки, журнал"
-row "$(mark hook PreToolUse)" "Guard" "PreToolUse" "секреты, код только через Edit/Write, $comments"
-row "$(mark hook PostToolUse)" "Форматирование" "PostToolUse" "$prettier"
-
 plan_block() {
   local p=$1 st=$2
   local total done acc_total acc_done next journal
@@ -89,57 +72,138 @@ plan_block() {
   [ -n "$journal" ] && { echo "  журнал:"; sed 's/^/    /' <<<"$journal"; }
 }
 
-if [ -d "$root/docs/backlog" ]; then
-  backlog=$(CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" list)
-  count() { awk -F'\t' -v s="$1" 'index($4, s) == 1' <<<"$backlog" | grep -c .; }
-  queued=$(grep -c . "$state/queue" 2>/dev/null)
+if [ "$1" = full ]; then
+echo "tw · ${root/#$HOME/~}"
   echo
-  echo "Бэклог · docs/backlog/"
-  echo "  входящих $(count входящая) · готовых $(count готова) · в очереди ${queued:-0} · на приёмке $(count 'на приёмке') · в эпиках $(count 'в эпике') · принято $(count принята)"
-  CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" epics | while IFS=$'\t' read -r m st n title; do
-    echo "  $m · $st · задач в эпике $n · $title"
-  done | perl -CSD -Mutf8 -pe 's/^(.{100}).+/$1…/'
-  runlog="$state/run.log"
-  if [ -f "$runlog" ]; then
-    last=$(awk '/ · старт · /{buf=""} {buf = buf $0 "\n"} END{printf "%s", buf}' "$runlog")
-    started=$(head -1 <<<"$last" | cut -d' ' -f1,2)
-    ok=$(grep -cE ' · (на приёмке|в эпике E[0-9]+) · ' <<<"$last")
-    stuck=$(grep -c ' · застряла: ' <<<"$last")
-    busy=$(awk -F'\t' '$4 == "в работе" { print $1 }' <<<"$backlog")
-    if CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" running; then
-      run_st="идёт с $started${busy:+, сейчас $(tr '\n' ' ' <<<"$busy" | sed 's/ $//')} (остановить: bash $PLUGIN/scripts/run.sh stop)"
-    else
-      run_st="последний с $started"; busy=""
-    fi
-    echo "  прогон: $run_st · сделано $ok · застряло $stuck · ждёт приёмки $(count 'на приёмке')"
-    wt1=$(get .runWorktree); wt1=${wt1:-.claude/worktrees/tw-run}
-    [[ "$wt1" = /* ]] || wt1="$root/$wt1"
-    for cur in $busy; do
-      slot=$(grep -oE 'исполнитель [0-9]+' "$root/docs/backlog/$cur.md" | tail -1 | grep -oE '[0-9]+')
-      wt=$wt1; [ "${slot:-1}" != 1 ] && wt="$wt1-$slot"
-      cur_plan=$(CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" get "$cur" План)
-      [ -n "$cur_plan" ] && [ -f "$wt/$cur_plan" ] && plan_block "$wt/$cur_plan" "$(plan_status "$wt/$cur_plan") · исполнитель ${slot:-1}, $cur"
-    done
-  fi
-  awk -F'\t' 'index($4, "застряла") == 1 { print "  " $1 " · " $4 }' <<<"$backlog" | perl -CSD -Mutf8 -pe 's/^(.{100}).+/$1…/'
+  echo "Pipeline: цель → спецификация → план → loop → проверка → приёмка"
+  echo
+  row "$(mark skill spec)" "Цель → спецификация" "skill tw:spec" "спецификаций: $specs${last_spec:+ · последняя: $(basename "$last_spec")}"
+  row "$(mark skill plan)" "Спецификация → план" "skill tw:plan" "планов: $plans_open открыто, $plans_done готово"
+  row "$(mark hook Stop)" "Loop до зелёных тестов" "Stop-hook" "${check_cmd:-${test_cmd:-тестов пока нет}} · кругов ${max:-3}, потом субагент → человек"
+  [ -n "$(get .setup)" ] && row "$(mark hook Stop)" "Окружение" "Stop-hook" "$(get .setup) · $( [ -n "$env_st" ] && echo "поднято tw $env_st" || echo "ещё не поднималось")${teardown:+ · остановить: $teardown}"
+  row "$(mark hook Stop)" "Проверка" "Stop-hook" "последний прогон: ${last_test:-ещё не было}"
+  row "$(mark hook Stop)" "Scope" "Stop-hook" "diff против плана и «Не трогаем»${last_scope:+ · $last_scope}"
+  row "$(mark hook Stop)" "Независимая проверка" "Stop-hook" "свежий claude (${verify_model:-sonnet}) по спеке и diff${last_verify:+ · $last_verify}"
+  row "$(mark skill accept)" "Приёмка человеком" "/tw:accept" "карточка: вердикты, допущения, пункты [человек], diff"
+  row "·" "Перепланирование" "правило в tw:plan" "сначала правка плана и строка в журнале"
+  row "$(mark hook SessionStart)" "Ledger / память" "SessionStart + план" "план = ledger: статус, [x] после проверки, журнал"
+  row "$(mark hook PreToolUse)" "Guard" "PreToolUse" "секреты, код только через Edit/Write, $comments"
+  row "$(mark hook PostToolUse)" "Форматирование" "PostToolUse" "$prettier"
+  exit 0
 fi
 
-open_found=0
+cut_to() { perl -CSD -Mutf8 -pe "s/^(.{$1}).+/\$1…/"; }
+B="$PLUGIN/scripts/backlog.sh"
+bl() { CLAUDE_PROJECT_DIR="$root" bash "$B" "$@"; }
+short() { H="$HOME" perl -pe 's/^\Q$ENV{H}\E/~/i' <<<"$1"; }
+title() { head -1 "$root/docs/backlog/$1.md" | sed -E 's/^# [BE]-?[0-9]+ · //'; }
+resume_cmd() {
+  local r sid cwd
+  r=$(ls -t "$state/run/$1"-*.jsonl 2>/dev/null | head -1)
+  [ -n "$r" ] || return
+  sid=$(grep -m1 '"subtype":"init"' "$r" | jq -r '.session_id // empty' 2>/dev/null)
+  cwd=$(grep -m1 '"subtype":"init"' "$r" | jq -r '.cwd // empty' 2>/dev/null)
+  [ -n "$sid" ] && echo "cd $(short "$cwd") && claude --resume $sid"
+}
+
+cd "$root" || exit 0
+branch=$(git branch --show-current 2>/dev/null)
+dirty=$(git status --porcelain --untracked-files=no -- . ':!docs/backlog' 2>/dev/null | grep -c .)
+echo "tw · ${root/#$HOME/~} · ${branch:-?}$([ "$dirty" -gt 0 ] && echo ", незакоммиченных файлов: $dirty" || echo ", чисто")"
+
+cmds=()
+cmd() { cmds+=("$(printf '%s\t%s' "$1" "$2")"); }
+
+if [ -d "$root/docs/backlog" ]; then
+  backlog=$(bl list)
+  count() { awk -F'\t' -v s="$1" 'index($4, s) == 1' <<<"$backlog" | grep -c .; }
+  runlog="$state/run.log"
+  echo
+  if [ -f "$runlog" ]; then
+    last=$(awk '/ · старт · /{buf=""} {buf = buf $0 "\n"} END{printf "%s", buf}' "$runlog")
+    started=$(head -1 <<<"$last" | cut -c6-16 | sed -E 's/^([0-9]+)-([0-9]+) /\2.\1 /')
+    if bl running; then
+      busy=$(awk -F'\t' '$4 == "в работе" { print $1 }' <<<"$backlog")
+      echo "Исполнитель идёт с $started · в работе: $(grep -c . <<<"$busy")"
+      wt1=$(get .runWorktree); wt1=${wt1:-.claude/worktrees/tw-run}
+      [[ "$wt1" = /* ]] || wt1="$root/$wt1"
+      for cur in $busy; do
+        line=$(grep " · $cur · старт в " <<<"$last" | tail -1)
+        slot=$(grep -oE 'исполнитель [0-9]+' <<<"$line" | grep -oE '[0-9]+')
+        model=$(sed -nE 's/.* · исполнитель [0-9]+ · ([a-z0-9-]+)$/\1/p' <<<"$line")
+        t0=$(date -j -f '%Y-%m-%d %H:%M:%S' "$(cut -c1-19 <<<"$line")" +%s 2>/dev/null)
+        mins=""; [ -n "$t0" ] && mins="$(( ($(date +%s) - t0) / 60 )) мин"
+        wt=$wt1; [ "${slot:-1}" != 1 ] && wt="$wt1-$slot"
+        p=$(bl get "$cur" План); prog=""; next=""
+        if [ -n "$p" ] && [ -f "$wt/$p" ]; then
+          prog="план $(grep -cE '^- \[x\] [0-9]+\.' "$wt/$p")/$(grep -cE '^- \[[ x]\] [0-9]+\.' "$wt/$p")"
+          next=$(grep -m1 -E '^- \[ \] [0-9]+\.' "$wt/$p" | sed 's/^- \[ \] //')
+        fi
+        echo "  $cur · исполнитель ${slot:-1}${model:+ · $model}${mins:+ · $mins}${prog:+ · $prog} · $(title "$cur")" | cut_to 110
+        [ -n "$next" ] && echo "         сейчас: $next" | cut_to 110
+      done
+      cmd "bash $(short "$PLUGIN")/scripts/watch.sh" "смотреть ход"
+      cmd "bash $(short "$PLUGIN")/scripts/run.sh stop" "остановить после текущих задач"
+    else
+      sum=$(grep ' · итог · ' <<<"$last" | tail -1 | sed 's/.* · итог · //')
+      echo "Исполнитель не идёт · последний прогон $started${sum:+ · $sum}"
+    fi
+  else
+    echo "Исполнитель ещё не запускался"
+  fi
+
+  waiting=$(awk -F'\t' 'index($4, "на приёмке") == 1 || index($4, "застряла") == 1 { print $1 "\t" $4 }' <<<"$backlog")
+  epics=$(bl epics)
+  epics_ready=$(awk -F'\t' '$2 == "на приёмке" { print $1 }' <<<"$epics")
+  if [ -n "$waiting$epics_ready" ]; then
+    echo
+    echo "Ждут тебя"
+    for e in $epics_ready; do
+      echo "  $e · эпик на приёмке · $(title "$e")" | cut_to 110
+      cmd "/tw:accept $e" "принять эпик $e целиком"
+    done
+    while IFS=$'\t' read -r id st; do
+      [ -n "$id" ] || continue
+      case "$st" in
+        "на приёмке"*)
+          echo "  $id · на приёмке · $(title "$id")" | cut_to 110
+          cmd "/tw:accept $id" "посмотреть карточку и принять"
+          ;;
+        *)
+          echo "  $id · застряла · $(title "$id")" | cut_to 110
+          echo "         ${st#застряла: }" | cut_to 110
+          if [ -s "$state/run/$id.denied" ]; then
+            cmd "runAllow в .claude/tw.json" "разрешить: $(head -1 "$state/run/$id.denied" | sed -E 's/.*/Bash(&)/')"
+          fi
+          cmd "/tw:accept $id" "что сделано и что нет у $id"
+          r=$(resume_cmd "$id"); [ -n "$r" ] && cmd "$r" "разговор исполнителя $id"
+          cmd "/tw:run $id" "повторить в той же ветке"
+          ;;
+      esac
+    done <<<"$waiting"
+  fi
+
+  echo
+  queued=$(grep -c . "$state/queue" 2>/dev/null)
+  echo "Бэклог: входящих $(count входящая) · готовых $(count готова) · в очереди ${queued:-0} · в эпиках $(count 'в эпике') · принято $(count принята)"
+  while IFS=$'\t' read -r e st n t; do
+    [ -n "$e" ] && echo "  $e · $st · $n · $t" | cut_to 110
+  done <<<"$epics"
+fi
+
 for p in "$root"/docs/plans/*.md; do
   [ -f "$p" ] || continue
   st=$(plan_status "$p")
   case "$st" in готов*|брошен*) continue ;; esac
-  [ $open_found -eq 0 ] && { echo; echo "Активная работа"; }
-  open_found=1
-  plan_block "$p" "$st"
+  echo "В папке проекта: ${p#"$root"/} · $st · задачи $(grep -cE '^- \[x\] [0-9]+\.' "$p")/$(grep -cE '^- \[[ x]\] [0-9]+\.' "$p")" | cut_to 110
 done
 
-if [ $open_found -eq 0 ]; then
-  last=$(ls -t "$root"/docs/plans/*.md 2>/dev/null | head -1)
-  if [ -n "$last" ]; then
-    echo
-    echo "Последний закрытый план"
-    plan_block "$last" "$(plan_status "$last")"
-  fi
-fi
+bl running 2>/dev/null || cmd "/tw:run" "набрать задачи и запустить исполнителя"
+cmd "/tw:scout · /tw:task" "найти проблемы · записать задачу"
+cmd "/tw:status full" "настройки конвейера и проверок"
+echo
+echo "Команды"
+printf '%s\n' "${cmds[@]}" | awk -F'\t' '!seen[$1]++' | while IFS=$'\t' read -r c d; do
+  if [ ${#c} -le 28 ]; then perl -CSA -e 'printf "  %-28s %s\n", @ARGV' "$c" "$d"; else echo "  $d:"; echo "    $c"; fi
+done
 exit 0

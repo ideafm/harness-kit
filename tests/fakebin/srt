@@ -1,0 +1,12 @@
+#!/bin/bash
+profile="" cmd=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s) profile=$2; shift ;;
+    -c) cmd=$2; shift ;;
+  esac
+  shift
+done
+[ -n "$FAKE_LOG" ] && echo "$PWD · $profile · $cmd" >>"$FAKE_LOG.srt"
+[ -f "$profile" ] || { echo "srt: no profile" >&2; exit 90; }
+exec bash -c "$cmd"

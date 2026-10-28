@@ -46,11 +46,27 @@ workers=$(jq -r '.runWorkers // 3' "$cfg")
 wt1=$(jq -r '.runWorktree // empty' "$cfg"); wt1=${wt1:-.claude/worktrees/tw-run}
 [[ "$wt1" = /* ]] || wt1="$root/$wt1"
 pm=npm; [ -f pnpm-lock.yaml ] && pm=pnpm; [ -f yarn.lock ] && pm=yarn
-allow=()
+allow=("Bash(git status *)" "Bash(git diff *)" "Bash(git log *)" "Bash(git show *)")
+run_word=""; [ "$pm" = npm ] && run_word="run "
+for name in $( { echo package.json; git ls-files '*package.json' | grep -v node_modules; } | sort -u | xargs jq -r '.scripts // {} | keys[]' 2>/dev/null | sort -u |
+  grep -E '^(test|typecheck|lint|format|build|check|db:generate)(:|$)' | grep -vE 'watch|debug|dev|start|prod'); do
+  allow+=("Bash($pm $run_word$name)" "Bash($pm $run_word$name *)")
+  [ "$pm" = pnpm ] && allow+=("Bash(pnpm --filter * $name)" "Bash(pnpm --filter * $name *)")
+done
+for bin in vitest jest tsc eslint prettier; do
+  allow+=("Bash($pm exec $bin *)")
+  [ "$pm" = pnpm ] && allow+=("Bash(pnpm --filter * exec $bin *)")
+done
 while IFS= read -r a; do allow+=("$a"); done < <(jq -r '.runAllow // empty | .[]' "$cfg")
-[ ${#allow[@]} -gt 0 ] || allow=("Bash($pm:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)")
 [ -n "$COMPOSE_PROJECT_NAME" ] || export COMPOSE_PROJECT_NAME=$(basename "$root" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
 plugins_off=$(jq -c '{enabledPlugins: ((.enabledPlugins // {}) | map_values(false))}' "$HOME/.claude/settings.json" 2>/dev/null || echo '{}')
+. "$plugin/scripts/sandbox.sh"
+export TW_SRT="" TW_CC_SANDBOX=""
+if sandbox_on; then
+  TW_SRT=$(sandbox_srt) || { echo "tw: нет srt — песочницы для проверок. Поставь: npm i -g @anthropic-ai/sandbox-runtime (или runSandbox: false в .claude/tw.json)"; exit 2; }
+  TW_CC_SANDBOX=$(sandbox_claude)
+  plugins_off=$(jq -c --argjson sb "$TW_CC_SANDBOX" '. + $sb' <<<"$plugins_off")
+fi
 
 [ -n "$(bash "$B" queue)" ] || { echo "tw: очередь пуста — исполнитель не запущен"; exit 0; }
 echo $$ >"$pidfile"
@@ -142,7 +158,7 @@ worker() {
     cat <<EOF
 Задача $id из бэклога. План: $plan. Спецификация — по ссылке в плане.
 Исполни план по разделу «Исполнение» skill tw:plan, с первой незакрытой задачи. Человека рядом нет: вопросов не задавай. Если без решения человека дальше нельзя — запиши в журнал плана «нужен человек: <что решить>» и закончи.
-Не коммить, не меняй ветку и не трогай docs/backlog/ — это делает исполнитель. Лимиты тоже отслеживает исполнитель: rate-limits.json не читай. Код меняй только через Edit и Write, не через sed, perl или python.
+Не коммить, не меняй ветку и не трогай docs/backlog/ — это делает исполнитель. Лимиты тоже отслеживает исполнитель: rate-limits.json не читай. Код меняй только через Edit и Write, не через sed, perl или python. Команды Bash запускай по одной, без `;`, `&&`, скобок и перенаправления в файлы: составные команды требуют подтверждения, а подтвердить некому. Окружение (база, контейнеры) уже поднято — docker и infra-скрипты не запускай. Bash работает в песочнице: писать можно только в этой папке, сети наружу нет.
 
 Текст задачи:
 
@@ -159,9 +175,10 @@ EOF
       why="конфликт с эпиком $m: $(w diff --name-only --diff-filter=U | tr '\n' ' ' | sed 's/ *$//')"
       w merge --abort 2>/dev/null; rmdir "$lock"; lock=""; return 1
     fi
-    bash "$B" wt-deps "$wt" >/dev/null || { why="в эпике $m не встали зависимости"; rmdir "$lock"; lock=""; return 1; }
+    local dout
+    dout=$(bash "$B" wt-deps "$wt" "$old") || { why="в эпике $m: ${dout:-не встали зависимости}"; rmdir "$lock"; lock=""; return 1; }
     cmd=$(CLAUDE_PROJECT_DIR="$wt" bash -c 'source "$1"; tw_check_cmd' _ "$plugin/hooks/lib.sh")
-    if [ -n "$cmd" ] && ! (cd "$wt" && export CLAUDE_PROJECT_DIR="$wt" NO_COLOR=1 ${env_args[@]+"${env_args[@]}"} && eval "$cmd") >"$wstate/epic-check.log" 2>&1; then
+    if [ -n "$cmd" ] && ! (export CLAUDE_PROJECT_DIR="$wt" NO_COLOR=1 ${env_args[@]+"${env_args[@]}"} && sandboxed "$wt" "$cmd") >"$wstate/epic-check.log" 2>&1; then
       why="в эпике $m после слияния проверки красные (лог: ${wstate#"$root"/}/epic-check.log)"; rmdir "$lock"; lock=""; return 1
     fi
     git update-ref "refs/heads/$ebranch" "$(w rev-parse HEAD)" "$old" || { why="ветка $ebranch сдвинулась во время слияния"; rmdir "$lock"; lock=""; return 1; }
@@ -222,10 +239,18 @@ EOF
   bash "$B" set "$id" Статус "в работе" "исполнитель $slot, ветка $branch"
   bash "$B" set "$id" Ветка "$branch"
 
-  local out_deps
-  if ! out_deps=$(bash "$B" wt-deps "$wt"); then
+  local out_deps rc
+  out_deps=$(bash "$B" wt-deps "$wt" "${ebranch:-$base}"); rc=$?
+  if [ $rc = 3 ]; then
+    release; stuck "$out_deps"; result stuck
+  elif [ $rc != 0 ]; then
     release
     stuck "сбой окружения: установка зависимостей (лог: ${wstate#"$root"/}/install.log)"; result env
+  fi
+  export TW_SANDBOX=""
+  if [ -n "$TW_SRT" ]; then
+    TW_SANDBOX="$state/sandbox/$slot.json"
+    sandbox_profile "$wt" "$TW_SANDBOX"
   fi
   [ -n "$out_deps" ] && say "$id · $out_deps"
 
@@ -290,7 +315,13 @@ EOF
     esac
     wip
     reason=${res#stuck:}
-    if [ -n "$escalate" ] && [ "$task_model" != "$escalate" ] && [[ "$reason" != нужен\ человек* && "$reason" != план\ брошен* ]]; then
+    denied=$(grep '^{' "$out" | jq -r 'select(.type=="result") | .permission_denials[]? | select(.tool_name=="Bash") | .tool_input.command // empty | select(test("[;&|()<>\\n]") | not)' 2>/dev/null | awk '!seen[$0]++' | head -3)
+    rm -f "$runs/$id.denied"
+    if [ -n "$denied" ]; then
+      printf '%s\n' "$denied" >"$runs/$id.denied"
+      reason="нет разрешения на \`$(head -1 <<<"$denied")\` — добавь в runAllow в .claude/tw.json · $reason"
+    fi
+    if [ -n "$escalate" ] && [ -z "$denied" ] && [ "$task_model" != "$escalate" ] && [[ "$reason" != нужен\ человек* && "$reason" != план\ брошен* ]]; then
       bash "$B" log "$id" "$task_model не справился ($reason), повтор на $escalate"
       say "$id · $reason на $task_model — повтор на $escalate"
       task_model=$escalate
@@ -390,6 +421,16 @@ shutdown() {
 trap 'rm -f "$pidfile"' EXIT
 trap shutdown TERM INT
 say "старт · очередь: $(bash "$B" queue | tr '\n' ' ')· исполнителей до $workers"
+setup=$(jq -r '.setup // empty' "$cfg")
+if [ -n "$setup" ]; then
+  if (eval "$setup") >"$state/setup.log" 2>&1; then
+    say "окружение поднято: $setup"
+  else
+    say "окружение не поднялось: $setup (лог: .claude/tw-state/setup.log) — стоп"
+    summary "окружение не поднялось"
+    exit 1
+  fi
+fi
 
 while :; do
   reap

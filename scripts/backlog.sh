@@ -179,8 +179,22 @@ case "$cmd" in
       [ -n "$f" ] && [ -e "$root/$f" ] && mkdir -p "$(dirname "$wt/$f")" && cp -R "$root/$f" "$wt/$f"
     done
     ;;
+  deps-changed)
+    wt=$1; ref=$2
+    set -- ':(glob)**/pnpm-lock.yaml' ':(glob)**/yarn.lock' ':(glob)**/package-lock.json' \
+      ':(glob)**/pnpm-workspace.yaml' ':(glob)**/.npmrc' ':(glob)**/.yarnrc.yml' ':(glob)**/.pnpmfile.cjs'
+    { git -C "$wt" diff --name-only "$ref" -- "$@"; git -C "$wt" ls-files --others --exclude-standard -- "$@"; } | sort -u
+    for f in $( { git -C "$wt" diff --name-only "$ref" -- ':(glob)**/package.json'; git -C "$wt" ls-files --others --exclude-standard -- ':(glob)**/package.json'; } | sort -u); do
+      k='{dependencies, devDependencies, optionalDependencies, peerDependencies, bundledDependencies, pnpm, overrides, resolutions, workspaces} | with_entries(select(.value != null))'
+      [ "$(git -C "$wt" show "$ref:$f" 2>/dev/null | jq -Sc "$k" 2>/dev/null)" = "$(jq -Sc "$k" "$wt/$f" 2>/dev/null)" ] || echo "$f"
+    done
+    ;;
   wt-deps)
     wt=$1
+    if [ -n "$2" ]; then
+      changed=$(bash "$0" deps-changed "$wt" "$2" | tr '\n' ' ' | sed 's/ $//')
+      [ -z "$changed" ] || { echo "ветка меняет зависимости ($changed) — их установка запускает чужой код, проверь и поставь сам"; exit 3; }
+    fi
     install=$(jq -r '.runInstall // empty' "$root/.claude/tw.json")
     pm=npm; [ -f "$wt/pnpm-lock.yaml" ] && pm=pnpm; [ -f "$wt/yarn.lock" ] && pm=yarn
     lock=""; for l in pnpm-lock.yaml yarn.lock package-lock.json; do [ -f "$wt/$l" ] && { lock=$l; break; }; done

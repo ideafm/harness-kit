@@ -11,6 +11,7 @@ export CLAUDE_PROJECT_DIR="$root"
 state="$root/.claude/tw-state"
 wrap() { perl -CSD -Mutf8 -pe 's/^(.{110}).+/$1…/'; }
 B="$(cd "$(dirname "$0")" && pwd)/backlog.sh"
+. "$(dirname "$B")/sandbox.sh"
 base=$(jq -r '.runBase // "main"' "$root/.claude/tw.json")
 git() { command git -C "$root" "$@"; }
 
@@ -47,14 +48,24 @@ merge_check() {
     echo "tw: пробное слияние $branch не прошло, $base не изменён. Лог: ${log#"$root"/}"; return 1
   fi
   bash "$B" wt-sync "$awt"
-  echo "tw: проверяю результат слияния: $cmd"
-  out=$(bash "$B" wt-deps "$awt") || { echo "tw: не встали зависимости для проверки слияния, $base не изменён. Лог: ${awt#"$root"/}/.claude/tw-state/install.log"; return 1; }
+  export TW_SANDBOX="" TW_SRT=""
+  if sandbox_on; then
+    TW_SRT=$(sandbox_srt) || { echo "tw: нет srt — песочницы для проверки слияния. Поставь: npm i -g @anthropic-ai/sandbox-runtime (или acceptCheck: false / runSandbox: false в .claude/tw.json)"; git -C "$awt" checkout -q --detach "$base"; return 1; }
+    TW_SANDBOX="$state/sandbox/accept.json"
+    sandbox_profile "$awt" "$TW_SANDBOX"
+  fi
+  echo "tw: проверяю результат слияния${TW_SANDBOX:+ в песочнице}: $cmd"
+  out=$(bash "$B" wt-deps "$awt" "$base"); rc=$?
+  if [ $rc != 0 ]; then
+    [ $rc = 3 ] && echo "tw: $out. $base не изменён: git diff $base...$branch -- <файлы>" || echo "tw: не встали зависимости для проверки слияния, $base не изменён. Лог: ${awt#"$root"/}/.claude/tw-state/install.log"
+    git -C "$awt" checkout -q --detach "$base"; return 1
+  fi
   [ -n "$out" ] && echo "tw: $out"
   export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-$(basename "$root" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')}
-  if [ -n "$setup" ] && ! (cd "$awt" && eval "$setup") >"$log" 2>&1; then
+  if [ -n "$setup" ] && ! (cd "$root" && eval "$setup") >"$log" 2>&1; then
     echo "tw: setup для проверки слияния упал ($setup), $base не изменён. Лог: ${log#"$root"/}"; git -C "$awt" checkout -q --detach "$base"; return 1
   fi
-  if ! (cd "$awt" && CLAUDE_PROJECT_DIR="$awt" NO_COLOR=1 eval "$cmd") >"$log" 2>&1; then
+  if ! (export CLAUDE_PROJECT_DIR="$awt" NO_COLOR=1 && sandboxed "$awt" "$cmd") >"$log" 2>&1; then
     echo "tw: на результате слияния $branch с $base проверки красные — $base не изменён. Каждая ветка зелёная сама по себе, вместе — нет."
     tail -15 "$log" | sed 's/^/  /'
     echo "Лог: ${log#"$root"/}. Варианты: доработать задачу (accept.sh rework $id \"…\") или поправить $base."
@@ -63,6 +74,33 @@ merge_check() {
   git -C "$awt" checkout -q --detach "$base"
   echo "tw: на результате слияния проверки зелёные"
 }
+[ "$1" = ui ] && set -- look "$2"
+if [ "$1" = look ] && [[ "$2" =~ ^[BE]-?[0-9]+$ ]]; then
+  branch="tw/$2"; lwt="$root/.claude/worktrees/tw-look"
+  git rev-parse -q --verify "refs/heads/$branch" >/dev/null || { echo "tw: нет ветки $branch"; exit 2; }
+  if [ ! -e "$lwt/.git" ]; then
+    git worktree prune
+    git check-ignore -q "$lwt" || echo "/${lwt#"$root"/}/" >>"$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+    git worktree add -q --detach "$lwt" "$branch" || exit 1
+  fi
+  git -C "$lwt" checkout -q --detach "$branch" && git -C "$lwt" reset -q --hard && git -C "$lwt" clean -qfd || exit 1
+  bash "$B" wt-sync "$lwt"
+  out=$(bash "$B" wt-deps "$lwt" "$base"); rc=$?
+  if [ $rc = 3 ]; then
+    echo "tw: $out. Посмотри: git diff $base...$branch -- <файлы>; поставить: cd $(H="$HOME" perl -pe 's/^\Q$ENV{H}\E/~/i' <<<"$lwt") && <установка>"
+  elif [ $rc != 0 ]; then
+    echo "tw: не встали зависимости. Лог: ${lwt#"$root"/}/.claude/tw-state/install.log"; exit 1
+  fi
+  [ $rc = 0 ] && [ -n "$out" ] && echo "tw: $out"
+  echo "tw: код $branch — в отдельной папке, твоя не тронута. Перейти:"
+  echo "  cd $(H="$HOME" perl -pe 's/^\Q$ENV{H}\E/~/i' <<<"$lwt")"
+  dev=$(jq -r '.dev // empty' "$root/.claude/tw.json")
+  pm=npm; [ -f "$root/pnpm-lock.yaml" ] && pm=pnpm; [ -f "$root/yarn.lock" ] && pm=yarn
+  [ -z "$dev" ] && jq -e '.scripts.dev' "$root/package.json" >/dev/null 2>&1 && dev="$pm run dev"
+  [ -n "$dev" ] && echo "Запуск: $dev"
+  echo "Правки там не сохраняются: следующий look перезапишет папку."
+  exit 0
+fi
 if [[ "$2" =~ ^E[0-9]+$ ]] && [[ "$1" =~ ^(merge|rework|reject)$ ]]; then
   action=$1; id=$2; note=$3; branch="tw/$id"
   bash "$B" get "$id" Статус >/dev/null || exit 2
@@ -147,13 +185,13 @@ if [ -n "$1" ] && [[ "$1" =~ ^E[0-9]+$ ]]; then
   echo "Сейчас папка проекта: $(git branch --show-current) · $(bash "$B" clean && echo чистая || echo 'есть незакоммиченные правки')"
   exit 0
 fi
-if [ -n "$1" ] && [ -n "$2" ] && [[ "$1" =~ ^(merge|rework|reject|rebase|ui)$ ]]; then
+if [ -n "$1" ] && [ -n "$2" ] && [[ "$1" =~ ^(merge|rework|reject|rebase)$ ]]; then
   action=$1; id=$2; note=$3
   bash "$B" get "$id" Статус >/dev/null || exit 2
   branch="tw/$id"
   git rev-parse -q --verify "refs/heads/$branch" >/dev/null || { echo "tw: нет ветки $branch"; exit 2; }
   plan=$(bash "$B" get "$id" План)
-  if [ "$action" != ui ] && git worktree list --porcelain | grep -qx "branch refs/heads/$branch"; then
+  if git worktree list --porcelain | grep -qx "branch refs/heads/$branch"; then
     echo "tw: ветка $branch открыта в worktree — исполнитель над ней работает (дождись конца задачи) или прогон прерван ($(bash "$B" running && echo 'идёт' || echo 'не идёт'))"; exit 2
   fi
   tmp=$(mktemp -d)
@@ -201,14 +239,6 @@ if [ -n "$1" ] && [ -n "$2" ] && [[ "$1" =~ ^(merge|rework|reject|rebase|ui)$ ]]
         git worktree remove --force "$tmp/wt"; exit 4
       fi
       git worktree remove --force "$tmp/wt"
-      ;;
-    ui)
-      dev=$(jq -r '.dev // empty' "$root/.claude/tw.json")
-      pm=npm; [ -f "$root/pnpm-lock.yaml" ] && pm=pnpm; [ -f "$root/yarn.lock" ] && pm=yarn
-      [ -z "$dev" ] && jq -e '.scripts.dev' "$root/package.json" >/dev/null 2>&1 && dev="$pm run dev"
-      view="$root/.claude/tw-state/view-$id"
-      echo "git -C $root worktree add $view $branch && cd $view && $pm install && ${dev:-<команда запуска>}"
-      echo "После просмотра: git -C $root worktree remove --force $view"
       ;;
   esac
   exit 0
@@ -308,7 +338,8 @@ if [ -n "$1" ]; then
   echo "Журнал плана"
   sed -n '/^## Журнал/,$p' <<<"$ptext" | grep -vE '^## |^$' | sed 's/^- //' | tail -3 | sed 's/^/  /' | wrap
   echo
-  echo "Решение: принять и слить в $base / доработать / посмотреть UI / отклонить."
+  echo "Решение: принять и слить в $base / доработать / посмотреть руками / отклонить."
+  echo "Попробовать руками на коде ветки: bash $(H="$HOME" perl -pe 's/^\Q$ENV{H}\E/~/i' <<<"$(dirname "$B")")/accept.sh look $id"
   echo "Сейчас папка проекта: $(git branch --show-current) · $(bash "$B" clean && echo чистая || echo 'есть незакоммиченные правки')"
   exit 0
 fi

@@ -1,5 +1,6 @@
 #!/bin/bash
 prompt="" model=""
+[ -n "$FAKE_LOG" ] && printf '%s\n' "$@" >"$FAKE_LOG.args"
 while [ $# -gt 0 ]; do
   case "$1" in
     -p) prompt=$2; shift ;;
@@ -52,6 +53,12 @@ case "$mode" in
     printf -- '- today · нужен человек: выбрать формат\n' >>"$plan"
     echo "green now" >"$state/last-test"
     finish ;;
+  denied)
+    echo "half" >>src/app.txt
+    printf -- '- today · нужен человек: запустить тест\n' >>"$plan"
+    echo "green now" >"$state/last-test"
+    echo '{"type":"result","num_turns":3,"total_cost_usd":0.01,"duration_ms":1000,"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"(pnpm a | tail)"}},{"tool_name":"Bash","tool_input":{"command":"bash deploy/t.sh"}},{"tool_name":"Bash","tool_input":{"command":"bash deploy/t.sh"}}]}'
+    exit 0 ;;
   noverify)
     echo "work" >>src/app.txt
     close_plan
