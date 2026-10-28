@@ -64,6 +64,7 @@ ${checks%$'\n\n'}"
 
   out=$(cd "$TW_ROOT" && TW_NESTED=1 claude -p "$prompt" --model "$model" \
     --strict-mcp-config --no-session-persistence --permission-mode default \
+    --settings "$(jq -c '{enabledPlugins: ((.enabledPlugins // {}) | map_values(false))}' "$HOME/.claude/settings.json" 2>/dev/null || echo '{}')" \
     --allowedTools "${tools[@]}" \
     --disallowedTools Edit Write NotebookEdit \
     --output-format json --json-schema "$schema" </dev/null 2>/dev/null)

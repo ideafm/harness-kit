@@ -11,6 +11,7 @@ const empty: Snapshot = {
   queue: [],
   current: '',
   startedAt: '',
+  plan: '',
   counts: '',
   runLog: [],
   actions: [],
@@ -18,7 +19,7 @@ const empty: Snapshot = {
   error: '',
 }
 const snapshot = atom({ plugin: 'tw', key: 'snapshot' } as const, empty, {
-  shape: 'snapshot-1',
+  shape: 'snapshot-2',
 })
 
 function oneLine(text: string, max = 160) {
@@ -104,6 +105,27 @@ function parseStream(text: string) {
   return { actions, stages }
 }
 
+async function planProgress($: Engine, root: string, id: string) {
+  const config = await readText($, `${root}/.claude/tw.json`)
+  let wt = '.claude/worktrees/tw-run'
+  try {
+    const value = JSON.parse(config).runWorktree
+    if (typeof value === 'string' && value) wt = value
+  } catch {}
+  if (!wt.startsWith('/')) wt = `${root}/${wt}`
+  const task = await readText($, `${root}/docs/backlog/${id}.md`)
+  const path = task.match(/\*\*План:\*\* ([^·\n]+)/)?.[1]?.trim()
+  if (!path) return ''
+  const plan = await readText($, `${wt}/${path}`)
+  const total = plan.match(/^- \[[ x]\] \d+\./gm)?.length ?? 0
+  const done = plan.match(/^- \[x\] \d+\./gm)?.length ?? 0
+  const next = plan.match(/^- \[ \] (\d+\..*)$/m)?.[1] ?? ''
+  return total ? `план ${done}/${total}${next ? ` · сейчас: ${next}` : ''}` : ''
+}
+
+let streamKey = ''
+let streamParsed: { actions: string[]; stages: string[] } = { actions: [], stages: [] }
+
 async function countStatuses($: Engine, root: string) {
   const dir = `${root}/docs/backlog`
   let entries: { name: string }[] = []
@@ -151,7 +173,14 @@ async function collect($: Engine): Promise<Snapshot> {
   try {
     const files = (await $.fs.list(`${state}/run`)).filter(f => f.name.endsWith('.jsonl'))
     const latest = files.sort((a, b) => b.mtimeMs - a.mtimeMs)[0]
-    if (latest) ({ actions, stages } = parseStream(await tail($, `${state}/run/${latest.name}`, 400)))
+    if (latest) {
+      const key = `${latest.name}:${latest.size}`
+      if (key !== streamKey) {
+        streamParsed = parseStream(await readText($, `${state}/run/${latest.name}`))
+        streamKey = key
+      }
+      ;({ actions, stages } = streamParsed)
+    }
   } catch {}
 
   return {
@@ -160,9 +189,10 @@ async function collect($: Engine): Promise<Snapshot> {
     queue,
     current,
     startedAt,
+    plan: current ? await planProgress($, root, current) : '',
     counts: await countStatuses($, root),
     runLog: runLog.slice(-8),
-    actions,
+    actions: actions.slice(-500),
     stages: stages.slice(-6),
     error: '',
   }
@@ -171,6 +201,7 @@ async function collect($: Engine): Promise<Snapshot> {
 let timer: { cancel: () => void } | undefined
 let last = ''
 let wasRunning = false
+let follow = true
 
 async function refresh($: Engine) {
   const next = await collect($)
@@ -180,6 +211,7 @@ async function refresh($: Engine) {
   if (key === last) return
   last = key
   await update($, snapshot, () => next)
+  if (follow) void $.ui.scroll({ in: PANE, to: 'end' }).catch(() => {})
 }
 
 async function start($: Engine) {
@@ -221,7 +253,6 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
     const s = await read($, snapshot)
     const width = Math.max(30, (e.viewport?.columns ?? 80) - 2)
-    const rows = Math.max(12, (e.viewport?.rows ?? 30) - 2)
     const fit = (text: string) => oneLine(text, width)
 
     if (s.error) return <Text dimColor>{s.error}</Text>
@@ -231,7 +262,6 @@ export const register: Register = on => {
       `сейчас: ${s.current ? `${s.current} с ${s.startedAt.slice(11, 16)}` : '—'} · очередь: ${s.queue.join(' ') || 'пусто'}`,
       `бэклог: ${s.counts || '—'}`,
     ]
-    const room = Math.max(3, rows - head.length - s.runLog.length - s.stages.length - 6)
 
     return (
       <Box flexDirection="column">
@@ -239,12 +269,14 @@ export const register: Register = on => {
           {fit(head[0] ?? '')}
         </Text>
         <Text>{fit(head[1] ?? '')}</Text>
+        {s.plan && <Text>{fit(s.plan)}</Text>}
         <Text dimColor>{fit(head[2] ?? '')}</Text>
         <Text> </Text>
-        <Text bold>Агент</Text>
-        {s.actions.length === 0 && <Text dimColor>потока ещё нет</Text>}
-        {s.actions.slice(-room).map(line => (
-          <Text dimColor={!line.startsWith('·')}>{fit(line)}</Text>
+        <Text bold>run.log</Text>
+        {s.runLog.map(line => (
+          <Text color={line.includes('застряла') ? 'red' : line.includes('на приёмке') ? 'green' : undefined}>
+            {fit(line.slice(11))}
+          </Text>
         ))}
         <Text> </Text>
         <Text bold>Stop</Text>
@@ -253,14 +285,18 @@ export const register: Register = on => {
           <Text color={/fail|красн|блок|нужен человек/.test(line) ? 'red' : undefined}>{fit(line)}</Text>
         ))}
         <Text> </Text>
-        <Text bold>run.log</Text>
-        {s.runLog.map(line => (
-          <Text color={line.includes('застряла') ? 'red' : line.includes('на приёмке') ? 'green' : undefined}>
-            {fit(line.slice(11))}
-          </Text>
+        <Text bold>Агент · колесо или стрелки — история, End — к последнему</Text>
+        {s.actions.length === 0 && <Text dimColor>потока ещё нет</Text>}
+        {s.actions.map(line => (
+          <Text dimColor={!line.startsWith('·')}>{fit(line)}</Text>
         ))}
       </Box>
     )
+  })
+
+  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
+    if (e.origin.kind === 'person') follow = e.offset >= e.contentRows - e.bodyRows
+    return next(e)
   })
 
   on('session.end', async ($, e, next) => {

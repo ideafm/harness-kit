@@ -31,7 +31,6 @@ while IFS= read -r f; do
   grep -qF -e "$f" -e "$base" <<<"$refs" || grep -qE "\`$stem\`" <<<"$refs" || outside+="$f"$'\n'
 done <<<"$changed"
 
-budget=$(tw_get .diffBudget); budget=${budget:-400}
 lines=$(git -C "$TW_ROOT" diff "$TW_REF" --numstat -- . ':!docs' ':!*.lock' ':!package-lock.json' | awk '{s+=$1+$2} END {print s+0}')
 while IFS= read -r f; do
   [ -f "$TW_ROOT/$f" ] && lines=$((lines + $(wc -l <"$TW_ROOT/$f")))
@@ -44,18 +43,16 @@ $(sed '/^$/d; s/^/  - /' <<<"$forbidden")
 [ -n "$outside" ] && problems+="Изменены файлы, которых нет ни в плане, ни в спецификации. Свои правки либо откати, либо впиши задачу в план и строку в «Журнал» (перепланирование); если правил не ты — спроси пользователя:
 $(sed '/^$/d; s/^/  - /' <<<"$outside")
 "
-[ "$lines" -gt "$budget" ] && problems+="Diff $lines строк — больше бюджета $budget. Разбей работу на задачи плана или запиши в «Журнал», почему так много, — дальше решит человек.
-"
 
 sig_file="$TW_STATE/scope-sig"
 if [ -z "$problems" ]; then
   rm -f "$sig_file"
-  echo "ok $(date '+%Y-%m-%d %H:%M') · diff $lines/$budget" >"$TW_STATE/last-scope"
+  echo "ok $(date '+%Y-%m-%d %H:%M') · diff $lines строк" >"$TW_STATE/last-scope"
   exit 0
 fi
 
 sig=$(printf '%s' "$problems" | sed 's/[0-9]//g' | shasum | cut -c1-12)
-echo "warn $(date '+%Y-%m-%d %H:%M') · diff $lines/$budget" >"$TW_STATE/last-scope"
+echo "warn $(date '+%Y-%m-%d %H:%M') · diff $lines строк" >"$TW_STATE/last-scope"
 [ "$(cat "$sig_file" 2>/dev/null)" = "$sig escalated" ] && exit 0
 if [ "$(cat "$sig_file" 2>/dev/null)" = "$sig" ]; then
   echo "$sig escalated" >"$sig_file"

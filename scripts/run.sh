@@ -21,6 +21,10 @@ if [ "$1" = stop ]; then
   while bash "$B" running; do sleep 1; done
   echo "исполнитель остановлен"; exit 0
 fi
+if ! [[ "${1:-0}" =~ ^[0-9]+$ ]]; then
+  echo "run.sh: неизвестный аргумент «$1» — ожидаю число задач (0 — вся очередь) или stop" >&2
+  exit 2
+fi
 if bash "$B" running; then
   echo "исполнитель уже идёт (pid $(cat "$pidfile")) — второй не запускаю" >&2
   exit 1
@@ -165,7 +169,7 @@ prompt_for() {
   cat <<EOF
 Задача $1 из бэклога. План: $2. Спецификация — по ссылке в плане.
 Исполни план по разделу «Исполнение» skill tw:plan, с первой незакрытой задачи. Человека рядом нет: вопросов не задавай. Если без решения человека дальше нельзя — запиши в журнал плана «нужен человек: <что решить>» и закончи.
-Не коммить, не меняй ветку и не трогай docs/backlog/ — это делает исполнитель.
+Не коммить, не меняй ветку и не трогай docs/backlog/ — это делает исполнитель. Лимиты тоже отслеживает исполнитель: rate-limits.json не читай.
 
 Текст задачи:
 
@@ -182,6 +186,7 @@ done_count=0
 env_fails=0
 cpid=""; id=""; untracked=""
 trap stopped TERM INT
+[ -n "$(bash "$B" queue)" ] || { echo "tw: очередь пуста — исполнитель не запущен"; exit 0; }
 say "старт · очередь: $(bash "$B" queue | tr '\n' ' ')· worktree ${wt#"$root"/}"
 ensure_worktree || { say "не удалось создать worktree $wt — стоп"; exit 1; }
 
@@ -231,7 +236,7 @@ while id=$(bash "$B" queue-next) && [ -n "$id" ]; do
   out="$runs/$id-$(date +%Y%m%d-%H%M%S).jsonl"
   args=(-p "$(prompt_for "$id" "$plan")" --permission-mode acceptEdits --output-format stream-json --verbose --allowedTools "${allow[@]}")
   [ -n "$model" ] && args+=(--model "$model")
-  args+=(--plugin-dir "$plugin")
+  args+=(--plugin-dir "$plugin" --strict-mcp-config --settings "$(jq -c '{enabledPlugins: ((.enabledPlugins // {}) | map_values(false))}' "$HOME/.claude/settings.json" 2>/dev/null || echo '{}')")
   (cd "$wt" && CLAUDE_PROJECT_DIR="$wt" TW_DIFF_BASE=$(git merge-base "$base" "$branch") exec claude "${args[@]}") </dev/null >"$out" 2>&1 &
   cpid=$!
   wait "$cpid"

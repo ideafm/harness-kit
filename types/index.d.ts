@@ -4,6 +4,7 @@ export type Snapshot = {
   queue: string[]
   current: string
   startedAt: string
+  plan: string
   counts: string
   runLog: string[]
   actions: string[]

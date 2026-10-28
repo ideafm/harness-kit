@@ -23,8 +23,11 @@ emit() {
   jq --arg t "${trail%$'\n'}" '.systemMessage = ([$t, (.systemMessage // empty)] | map(select(. != "")) | join("\n"))' <<<"$out"
 }
 if [ -f "$checked" ]; then
-  changed=$(find "$TW_ROOT" \( -path "$TW_ROOT/node_modules" -o -path "$TW_ROOT/.git" -o -path "$TW_ROOT/.claude" \) -prune -o -newer "$checked" -print -quit)
+  changed=$(find "$TW_ROOT" \( -name node_modules -o -path "$TW_ROOT/.git" -o -path "$TW_ROOT/.claude" \) -prune -o -type f -newer "$checked" -print | grep -vE '\.md$' | head -1)
   [ -n "$changed" ] || exit 0
+else
+  changed=$(tw_changed | grep -vE '\.md$' | head -1)
+  [ -n "$changed" ] || [ -z "$(tw_changed)" ] || exit 0
 fi
 
 after_tests() {

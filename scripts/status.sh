@@ -51,7 +51,6 @@ last_test=$(cat "$state/last-test" 2>/dev/null)
 last_scope=$(cat "$state/last-scope" 2>/dev/null)
 last_verify=$(cat "$state/last-verify" 2>/dev/null)
 verify_model=$(get .verifyModel)
-budget=$(get .diffBudget)
 prettier="✗ нет prettier в проекте"
 [ -x "$root/node_modules/.bin/prettier" ] && prettier="prettier"
 comments="комментарии запрещены"
@@ -66,7 +65,7 @@ row "$(mark skill plan)" "Спецификация → план" "skill tw:plan"
 row "$(mark hook Stop)" "Loop до зелёных тестов" "Stop-hook" "${check_cmd:-${test_cmd:-тестов пока нет}} · кругов ${max:-3}, потом субагент → человек"
 [ -n "$(get .setup)" ] && row "$(mark hook Stop)" "Окружение" "Stop-hook" "$(get .setup) · $( [ -n "$env_st" ] && echo "поднято tw $env_st" || echo "ещё не поднималось")${teardown:+ · остановить: $teardown}"
 row "$(mark hook Stop)" "Проверка" "Stop-hook" "последний прогон: ${last_test:-ещё не было}"
-row "$(mark hook Stop)" "Scope" "Stop-hook" "diff против плана и «Не трогаем», бюджет ${budget:-400} строк${last_scope:+ · $last_scope}"
+row "$(mark hook Stop)" "Scope" "Stop-hook" "diff против плана и «Не трогаем»${last_scope:+ · $last_scope}"
 row "$(mark hook Stop)" "Независимая проверка" "Stop-hook" "свежий claude (${verify_model:-sonnet}) по спеке и diff${last_verify:+ · $last_verify}"
 row "$(mark skill accept)" "Приёмка человеком" "/tw:accept" "карточка: вердикты, допущения, пункты [человек], diff"
 row "·" "Перепланирование" "правило в tw:plan" "сначала правка плана и строка в журнале"
@@ -110,6 +109,12 @@ if [ -d "$root/docs/backlog" ]; then
       run_st="последний с $started"
     fi
     echo "  прогон: $run_st · сделано $ok · застряло $stuck · ждёт приёмки $(count 'на приёмке')"
+    if [ -n "${cur:-}" ]; then
+      wt=$(get .runWorktree); wt=${wt:-.claude/worktrees/tw-run}
+      [[ "$wt" = /* ]] || wt="$root/$wt"
+      cur_plan=$(CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" get "$cur" План)
+      [ -n "$cur_plan" ] && [ -f "$wt/$cur_plan" ] && plan_block "$wt/$cur_plan" "$(plan_status "$wt/$cur_plan") · исполнитель, $cur"
+    fi
   fi
   awk -F'\t' 'index($4, "застряла") == 1 { print "  " $1 " · " $4 }' <<<"$backlog" | perl -CSD -Mutf8 -pe 's/^(.{100}).+/$1…/'
 fi
