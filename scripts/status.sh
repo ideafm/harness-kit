@@ -95,15 +95,15 @@ if [ -d "$root/docs/backlog" ]; then
   queued=$(grep -c . "$state/queue" 2>/dev/null)
   echo
   echo "Бэклог · docs/backlog/"
-  echo "  входящих $(count входящая) · готовых $(count готова) · в очереди ${queued:-0} · на приёмке $(count 'на приёмке') · в вехах $(count 'в вехе') · принято $(count принята)"
-  CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" milestones | while IFS=$'\t' read -r m st n title; do
-    echo "  $m · $st · задач в вехе $n · $title"
+  echo "  входящих $(count входящая) · готовых $(count готова) · в очереди ${queued:-0} · на приёмке $(count 'на приёмке') · в эпиках $(count 'в эпике') · принято $(count принята)"
+  CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" epics | while IFS=$'\t' read -r m st n title; do
+    echo "  $m · $st · задач в эпике $n · $title"
   done | perl -CSD -Mutf8 -pe 's/^(.{100}).+/$1…/'
   runlog="$state/run.log"
   if [ -f "$runlog" ]; then
     last=$(awk '/ · старт · /{buf=""} {buf = buf $0 "\n"} END{printf "%s", buf}' "$runlog")
     started=$(head -1 <<<"$last" | cut -d' ' -f1,2)
-    ok=$(grep -cE ' · (на приёмке|в вехе M[0-9]+) · ' <<<"$last")
+    ok=$(grep -cE ' · (на приёмке|в эпике E[0-9]+) · ' <<<"$last")
     stuck=$(grep -c ' · застряла: ' <<<"$last")
     busy=$(awk -F'\t' '$4 == "в работе" { print $1 }' <<<"$backlog")
     if CLAUDE_PROJECT_DIR="$root" bash "$PLUGIN/scripts/backlog.sh" running; then

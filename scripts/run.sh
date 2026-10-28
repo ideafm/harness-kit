@@ -104,7 +104,7 @@ hit_limit() {
 }
 
 worker() {
-  local slot=$1 id=$2 wt wstate branch plan out res reason title task_model task_cost=0 cost=0 untracked cpid="" m mbranch="" lock="" why=""
+  local slot=$1 id=$2 wt wstate branch plan out res reason title task_model task_cost=0 cost=0 untracked cpid="" m ebranch="" lock="" why=""
   wt=$(slot_wt "$slot")
   wstate="$wt/.claude/tw-state"
   branch="tw/$id"
@@ -153,30 +153,30 @@ EOF
     local old cmd
     lock="$state/$m.lock"
     until mkdir "$lock" 2>/dev/null; do sleep 1; done
-    old=$(git rev-parse "refs/heads/$mbranch")
+    old=$(git rev-parse "refs/heads/$ebranch")
     w checkout -q --detach "$old"
     if ! w merge -q --no-ff --no-edit -m "feat: merge backlog item $id into $m" "$branch" >/dev/null 2>&1; then
-      why="конфликт с вехой $m: $(w diff --name-only --diff-filter=U | tr '\n' ' ' | sed 's/ *$//')"
+      why="конфликт с эпиком $m: $(w diff --name-only --diff-filter=U | tr '\n' ' ' | sed 's/ *$//')"
       w merge --abort 2>/dev/null; rmdir "$lock"; lock=""; return 1
     fi
-    bash "$B" wt-deps "$wt" >/dev/null || { why="на вехе $m не встали зависимости"; rmdir "$lock"; lock=""; return 1; }
+    bash "$B" wt-deps "$wt" >/dev/null || { why="в эпике $m не встали зависимости"; rmdir "$lock"; lock=""; return 1; }
     cmd=$(CLAUDE_PROJECT_DIR="$wt" bash -c 'source "$1"; tw_check_cmd' _ "$plugin/hooks/lib.sh")
-    if [ -n "$cmd" ] && ! (cd "$wt" && export CLAUDE_PROJECT_DIR="$wt" NO_COLOR=1 ${env_args[@]+"${env_args[@]}"} && eval "$cmd") >"$wstate/milestone-check.log" 2>&1; then
-      why="на вехе $m после слияния проверки красные (лог: ${wstate#"$root"/}/milestone-check.log)"; rmdir "$lock"; lock=""; return 1
+    if [ -n "$cmd" ] && ! (cd "$wt" && export CLAUDE_PROJECT_DIR="$wt" NO_COLOR=1 ${env_args[@]+"${env_args[@]}"} && eval "$cmd") >"$wstate/epic-check.log" 2>&1; then
+      why="в эпике $m после слияния проверки красные (лог: ${wstate#"$root"/}/epic-check.log)"; rmdir "$lock"; lock=""; return 1
     fi
-    git update-ref "refs/heads/$mbranch" "$(w rev-parse HEAD)" "$old" || { why="ветка $mbranch сдвинулась во время слияния"; rmdir "$lock"; lock=""; return 1; }
+    git update-ref "refs/heads/$ebranch" "$(w rev-parse HEAD)" "$old" || { why="ветка $ebranch сдвинулась во время слияния"; rmdir "$lock"; lock=""; return 1; }
     rmdir "$lock"; lock=""
     git branch -q -D "$branch"
   }
-  milestone_ready() {
+  epic_ready() {
     local row
-    row=$(bash "$B" milestones | awk -F'\t' -v m="$m" '$1 == m')
-    [ "$(cut -f2 <<<"$row")" = открыта ] || return 0
+    row=$(bash "$B" epics | awk -F'\t' -v m="$m" '$1 == m')
+    [ "$(cut -f2 <<<"$row")" = открыт ] || return 0
     local n=$(cut -f3 <<<"$row")
     [ "${n%/*}" = "${n#*/}" ] || return 0
-    bash "$B" set "$m" Статус "на приёмке" "все задачи вехи в ветке $mbranch"
-    say "$m · веха готова к приёмке · $(cut -f4 <<<"$row")"
-    notify "Веха $m готова к приёмке: $(cut -f4 <<<"$row")"
+    bash "$B" set "$m" Статус "на приёмке" "все задачи эпика в ветке $ebranch"
+    say "$m · эпик готов к приёмке · $(cut -f4 <<<"$row")"
+    notify "Эпик $m готов к приёмке: $(cut -f4 <<<"$row")"
   }
   interrupted() {
     [ -n "$lock" ] && rmdir "$lock" 2>/dev/null
@@ -213,11 +213,11 @@ EOF
   if ! w checkout -q "$branch"; then
     stuck "ветка $branch занята другим worktree"; result stuck
   fi
-  m=$(bash "$B" get "$id" Веха | grep -oE '^M[0-9]+')
+  m=$(bash "$B" get "$id" Эпик | grep -oE '^E[0-9]+')
   if [ -n "$m" ]; then
-    mbranch="tw/$m"
-    git rev-parse -q --verify "refs/heads/$mbranch" >/dev/null || { release; stuck "нет ветки вехи $mbranch"; result stuck; }
-    w rebase -q "$mbranch" >/dev/null 2>&1 || w rebase --abort >/dev/null 2>&1
+    ebranch="tw/$m"
+    git rev-parse -q --verify "refs/heads/$ebranch" >/dev/null || { release; stuck "нет ветки эпика $ebranch"; result stuck; }
+    w rebase -q "$ebranch" >/dev/null 2>&1 || w rebase --abort >/dev/null 2>&1
   fi
   bash "$B" set "$id" Статус "в работе" "исполнитель $slot, ветка $branch"
   bash "$B" set "$id" Ветка "$branch"
@@ -242,7 +242,7 @@ EOF
     args=(-p "$(prompt_for)" --permission-mode acceptEdits --output-format stream-json --verbose --allowedTools "${allow[@]}")
     [ -n "$task_model" ] && args+=(--model "$task_model")
     args+=(--plugin-dir "$plugin" --strict-mcp-config --settings "$plugins_off")
-    (cd "$wt" && export CLAUDE_PROJECT_DIR="$wt" TW_SLOT="$slot" TW_DIFF_BASE=$(git merge-base "${mbranch:-$base}" "$branch") ${env_args[@]+"${env_args[@]}"} && exec claude "${args[@]}") </dev/null >"$out" 2>&1 &
+    (cd "$wt" && export CLAUDE_PROJECT_DIR="$wt" TW_SLOT="$slot" TW_DIFF_BASE=$(git merge-base "${ebranch:-$base}" "$branch") ${env_args[@]+"${env_args[@]}"} && exec claude "${args[@]}") </dev/null >"$out" 2>&1 &
     cpid=$!
     wait "$cpid"
     cpid=""
@@ -275,9 +275,9 @@ EOF
             release; stuck "$why"; result stuck
           fi
           release
-          bash "$B" set "$id" Статус "в вехе $m" "проверки зелёные, проверяющий подтвердил, слита в $mbranch"
-          say "$id · в вехе $m · $(money "$cost") · $title"
-          milestone_ready
+          bash "$B" set "$id" Статус "в эпике $m" "проверки зелёные, проверяющий подтвердил, слита в $ebranch"
+          say "$id · в эпике $m · $(money "$cost") · $title"
+          epic_ready
           result ok
         fi
         release

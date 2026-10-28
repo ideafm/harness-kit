@@ -36,7 +36,7 @@ task() {
 - **Готово, когда:** работает
 - **Область:** ${AREA:-—}
 - **Зависит от:** ${DEPS:-—}
-- **Веха:** ${MS:-—}
+- **Эпик:** ${MS:-—}
 - **Спека:** — · **План:** — · **Ветка:** —
 
 ## Журнал
@@ -45,8 +45,8 @@ task() {
 EOF
 }
 
-milestone() {
-  printf '# %s · Первая веха\n\n- **Статус:** открыта\n- **Цель:** можно потрогать\n- **Как посмотреть:** pnpm dev\n\n## Журнал\n\n' "$1" >"docs/backlog/$1.md"
+epic() {
+  printf '# %s · Первый эпик\n\n- **Статус:** открыт\n- **Цель:** можно потрогать\n- **Как посмотреть:** pnpm dev\n\n## Журнал\n\n' "$1" >"docs/backlog/$1.md"
 }
 
 prepare() {
@@ -287,42 +287,42 @@ if scenario stop-many; then
   check "дерево claude погашено" bash -c "! pgrep -f '$K/tests/fakebin/claude'"
 fi
 
-if scenario milestone; then
-  fixture milestone
-  milestone M1
-  MS=M1 AREA='`src/a`' prepare B-001 >/dev/null
-  MS=M1 AREA='`src/b`' DEPS=B-001 prepare B-002 >/dev/null
-  check "ветка задачи от ветки вехи" git merge-base --is-ancestor tw/M1 tw/B-001
+if scenario epic; then
+  fixture epic
+  epic E1
+  MS=E1 AREA='`src/a`' prepare B-001 >/dev/null
+  MS=E1 AREA='`src/b`' DEPS=B-001 prepare B-002 >/dev/null
+  check "ветка задачи от ветки эпика" git merge-base --is-ancestor tw/E1 tw/B-001
   FAKE_MODE=slow FAKE_SLEEP=0 run B-001 B-002
-  check "обе задачи в вехе" is "$(st B-001) | $(st B-002)" "в вехе M1 | в вехе M1"
-  check "веха готова к приёмке" is "$(st M1)" "на приёмке"
-  check "в ветке вехи работа обеих" bash -c "git show tw/M1:src/B-001.txt >/dev/null && git show tw/M1:src/B-002.txt >/dev/null"
+  check "обе задачи в эпике" is "$(st B-001) | $(st B-002)" "в эпике E1 | в эпике E1"
+  check "эпик готов к приёмке" is "$(st E1)" "на приёмке"
+  check "в ветке эпика работа обеих" bash -c "git show tw/E1:src/B-001.txt >/dev/null && git show tw/E1:src/B-002.txt >/dev/null"
   check "вторая задача начинала с первой" grep -q 'исполнитель' docs/backlog/B-002.md
   check "ветки задач удалены" bash -c "! git rev-parse -q --verify refs/heads/tw/B-001 && ! git rev-parse -q --verify refs/heads/tw/B-002"
   check "main не тронут" untouched
-  check "уведомление о вехе" grep -q 'Веха M1 готова к приёмке' "$FAKE_LOG.notify"
-  card=$(tw accept.sh M1)
-  check "карточка вехи" has "$card" "B-002 · в вехе M1"
-  check "список приёмки показывает веху" has "$(tw accept.sh)" "M1 · задач 2/2"
-  tw accept.sh merge M1 >/dev/null
-  check "веха слита" is "$(st M1) | $(st B-001) | $(st B-002)" "принята | принята | принята"
-  check "в main работа вехи" bash -c "[ -f src/B-001.txt ] && [ -f src/B-002.txt ]"
-  check "ветка вехи удалена" bash -c "! git rev-parse -q --verify refs/heads/tw/M1"
+  check "уведомление об эпике" grep -q 'Эпик E1 готов к приёмке' "$FAKE_LOG.notify"
+  card=$(tw accept.sh E1)
+  check "карточка эпика" has "$card" "B-002 · в эпике E1"
+  check "список приёмки показывает эпик" has "$(tw accept.sh)" "E1 · задач 2/2"
+  tw accept.sh merge E1 >/dev/null
+  check "эпик слит" is "$(st E1) | $(st B-001) | $(st B-002)" "принят | принята | принята"
+  check "в main работа эпика" bash -c "[ -f src/B-001.txt ] && [ -f src/B-002.txt ]"
+  check "ветка эпика удалена" bash -c "! git rev-parse -q --verify refs/heads/tw/E1"
 fi
 
-if scenario milestone-red; then
-  fixture milestone-red
+if scenario epic-red; then
+  fixture epic-red
   printf '{"check": "! grep -q BREAK src/other.txt"}\n' >.claude/tw.json
-  milestone M1
-  MS=M1 prepare B-001 >/dev/null
-  before=$(git rev-parse tw/M1)
+  epic E1
+  MS=E1 prepare B-001 >/dev/null
+  before=$(git rev-parse tw/E1)
   FAKE_MODE=breaks run B-001
-  check "красная веха — задача застряла" has "$(st B-001)" "на вехе M1 после слияния проверки красные"
-  check "ветка вехи не сдвинулась" is "$(git rev-parse tw/M1)" "$before"
+  check "красный эпик — задача застряла" has "$(st B-001)" "в эпике E1 после слияния проверки красные"
+  check "ветка эпика не сдвинулась" is "$(git rev-parse tw/E1)" "$before"
   check "ветка задачи осталась" git rev-parse -q --verify refs/heads/tw/B-001
-  check "веха открыта" is "$(st M1)" открыта
-  tw accept.sh rework M1 "добавить экспорт" >/dev/null
-  check "доработка вехи — новая задача" is "$(tw backlog.sh get B-002 Веха)" M1
+  check "эпик открыт" is "$(st E1)" открыт
+  tw accept.sh rework E1 "добавить экспорт" >/dev/null
+  check "доработка эпика — новая задача" is "$(tw backlog.sh get B-002 Эпик)" E1
 fi
 
 if scenario stop-hook; then
