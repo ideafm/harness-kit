@@ -21,7 +21,7 @@ fixture() {
   git init -q -b main
   echo base >src/app.txt
   echo base >src/other.txt
-  printf '.claude/tw-state/\n' >.gitignore
+  printf '.claude/tw-state/\ndocs/backlog/\n' >.gitignore
   printf '{"check": "true"}\n' >.claude/tw.json
   git add -A && git -c user.name=t -c user.email=t@t commit -qm init
 }
