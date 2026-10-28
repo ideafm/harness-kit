@@ -30,6 +30,39 @@ plan_edit() {
   ' "$3"
 }
 
+merge_check() {
+  [ "$(jq -r '.acceptCheck' "$root/.claude/tw.json")" = false ] && return 0
+  local awt="$root/.claude/worktrees/tw-accept" cmd setup log="$state/accept-check.log" out
+  cmd=$(CLAUDE_PROJECT_DIR="$root" bash -c 'source "$1"; tw_check_cmd' _ "$(dirname "$B")/../hooks/lib.sh")
+  [ -n "$cmd" ] || return 0
+  setup=$(jq -r '.setup // empty' "$root/.claude/tw.json")
+  if [ ! -e "$awt/.git" ]; then
+    git worktree prune
+    git check-ignore -q "$awt" || echo "/${awt#"$root"/}/" >>"$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+    git worktree add -q --detach "$awt" "$base" || return 1
+  fi
+  git -C "$awt" checkout -q --detach "$base" && git -C "$awt" reset -q --hard && git -C "$awt" clean -qfd || return 1
+  if ! git -C "$awt" merge -q --no-ff --no-edit "$branch" >"$log" 2>&1; then
+    git -C "$awt" merge --abort 2>/dev/null
+    echo "tw: пробное слияние $branch не прошло, $base не изменён. Лог: ${log#"$root"/}"; return 1
+  fi
+  bash "$B" wt-sync "$awt"
+  echo "tw: проверяю результат слияния: $cmd"
+  out=$(bash "$B" wt-deps "$awt") || { echo "tw: не встали зависимости для проверки слияния, $base не изменён. Лог: ${awt#"$root"/}/.claude/tw-state/install.log"; return 1; }
+  [ -n "$out" ] && echo "tw: $out"
+  export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-$(basename "$root" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')}
+  if [ -n "$setup" ] && ! (cd "$awt" && eval "$setup") >"$log" 2>&1; then
+    echo "tw: setup для проверки слияния упал ($setup), $base не изменён. Лог: ${log#"$root"/}"; git -C "$awt" checkout -q --detach "$base"; return 1
+  fi
+  if ! (cd "$awt" && CLAUDE_PROJECT_DIR="$awt" NO_COLOR=1 eval "$cmd") >"$log" 2>&1; then
+    echo "tw: на результате слияния $branch с $base проверки красные — $base не изменён. Каждая ветка зелёная сама по себе, вместе — нет."
+    tail -15 "$log" | sed 's/^/  /'
+    echo "Лог: ${log#"$root"/}. Варианты: доработать задачу (accept.sh rework $id \"…\") или поправить $base."
+    git -C "$awt" checkout -q --detach "$base"; return 1
+  fi
+  git -C "$awt" checkout -q --detach "$base"
+  echo "tw: на результате слияния проверки зелёные"
+}
 if [ -n "$1" ] && [ -n "$2" ] && [[ "$1" =~ ^(merge|rework|reject|rebase|ui)$ ]]; then
   action=$1; id=$2; note=$3
   bash "$B" get "$id" Статус >/dev/null || exit 2
@@ -50,6 +83,7 @@ if [ -n "$1" ] && [ -n "$2" ] && [[ "$1" =~ ^(merge|rework|reject|rebase|ui)$ ]]
         sed -n '2,/^$/p' "$tmp/conflict" | grep . | sed 's/^/  /'
         echo "Предложи rebase: accept.sh rebase $id"; exit 4
       fi
+      merge_check || exit 5
       git show "$branch:$plan" >"$tmp/plan" && plan_edit merge "" "$tmp/plan" &&
         bash "$B" commit-to "$branch" "docs: accept $id" "$plan=$tmp/plan" || exit 2
       if ! git merge -q --no-ff "$branch" -m "feat: merge backlog item $id"; then

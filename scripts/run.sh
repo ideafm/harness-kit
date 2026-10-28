@@ -39,18 +39,9 @@ threshold=$(jq -r '.runLimit // 95' "$cfg")
 model=$(jq -r '.runModel // "sonnet"' "$cfg")
 escalate=$(jq -r 'if has("runEscalate") then (.runEscalate // "") else "opus" end' "$cfg")
 escalated=""
-install=$(jq -r '.runInstall // empty' "$cfg")
 wt=$(jq -r '.runWorktree // empty' "$cfg"); wt=${wt:-.claude/worktrees/tw-run}
 [[ "$wt" = /* ]] || wt="$root/$wt"
 pm=npm; [ -f pnpm-lock.yaml ] && pm=pnpm; [ -f yarn.lock ] && pm=yarn
-lock=""; for l in pnpm-lock.yaml yarn.lock package-lock.json; do [ -f "$l" ] && { lock=$l; break; }; done
-if [ -z "$install" ] && [ -f package.json ]; then
-  case "$pm" in
-    pnpm) install="pnpm install --frozen-lockfile --prefer-offline" ;;
-    yarn) install="yarn install --frozen-lockfile" ;;
-    *) [ -n "$lock" ] && install="npm ci" || install="npm install" ;;
-  esac
-fi
 allow=()
 while IFS= read -r a; do allow+=("$a"); done < <(jq -r '.runAllow // empty | .[]' "$cfg")
 [ ${#allow[@]} -gt 0 ] || allow=("Bash($pm:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)")
@@ -73,22 +64,14 @@ ensure_worktree() {
     git worktree add -q --detach "$wt" "$base" || return 1
     say "worktree $wt от $base"
   fi
-  mkdir -p "$wstate"
-  cp "$cfg" "$wt/.claude/tw.json"
-  local f
-  while IFS= read -r f; do
-    [ -n "$f" ] && [ -e "$root/$f" ] && mkdir -p "$(dirname "$wt/$f")" && cp -R "$root/$f" "$wt/$f"
-  done < <(jq -r '.runCopy // empty | .[]' "$cfg")
+  bash "$B" wt-sync "$wt"
 }
 
 install_deps() {
-  [ -n "$install" ] || return 0
-  local sum
-  sum=$( { echo "$install"; [ -n "$lock" ] && cat "$wt/$lock"; } | shasum | cut -c1-16)
-  [ "$(cat "$wstate/installed" 2>/dev/null)" = "$sum" ] && return 0
-  say "зависимости: $install"
-  (cd "$wt" && eval "$install") >"$wstate/install.log" 2>&1 || return 1
-  echo "$sum" >"$wstate/installed"
+  local out rc
+  out=$(bash "$B" wt-deps "$wt"); rc=$?
+  [ -n "$out" ] && say "$out"
+  return $rc
 }
 
 copied() {

@@ -29,6 +29,12 @@ case "$mode" in
     echo "green now" >"$state/last-test"
     echo "ok now" >"$state/last-verify"
     finish ;;
+  breaks)
+    echo "BREAK $id" >>src/other.txt
+    close_plan
+    echo "green now" >"$state/last-test"
+    echo "ok now" >"$state/last-verify"
+    finish ;;
   red)
     echo "broken" >>src/app.txt
     echo "red now" >"$state/last-test"

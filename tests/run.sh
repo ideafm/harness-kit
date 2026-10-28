@@ -180,12 +180,32 @@ if scenario accept; then
   tw accept.sh rebase B-002 >/dev/null
   check "rebase с конфликтом — отказ" is "$?" 4
   git worktree list >"$work/wt.txt"
-  check "rebase не оставил worktree" is "$(grep -vc tw-run "$work/wt.txt")" 1
+  check "rebase не оставил worktree" is "$(grep -vcE 'tw-(run|accept)' "$work/wt.txt")" 1
   tw accept.sh rework B-002 "добавить тест" >/dev/null
   check "доработка — статус готова" is "$(st B-002)" готова
   check "доработка в плане ветки" has "$(git show tw/B-002:docs/plans/b-002.md)" "3. Доработка: добавить тест"
   tw accept.sh reject B-002 "не нужно" >/dev/null
   check "отклонена" is "$(st B-002)" "отклонена: не нужно"
+fi
+
+if scenario merge-check; then
+  fixture merge-check
+  printf '{"check": "! grep -q BREAK src/other.txt"}\n' >.claude/tw.json
+  prepare B-001 >/dev/null
+  FAKE_MODE=breaks run B-001
+  head=$(git rev-parse HEAD)
+  out=$(tw accept.sh merge B-001)
+  check "красное слияние — отказ" is "$?" 5
+  check "причина в выводе" has "$out" "проверки красные"
+  check "main не тронут" is "$(git rev-parse HEAD)" "$head"
+  check "статус остался на приёмке" is "$(st B-001)" "на приёмке"
+  check "ветка осталась" git rev-parse -q --verify refs/heads/tw/B-001
+  prepare B-002 >/dev/null
+  run B-002
+  out=$(tw accept.sh merge B-002)
+  check "зелёное слияние проходит" is "$(st B-002)" принята
+  check "проверка слияния была" has "$out" "проверки зелёные"
+  check "проверочный worktree отпущен на main" is "$(git -C .claude/worktrees/tw-accept rev-parse HEAD)" "$(git rev-parse HEAD~1)"
 fi
 
 if scenario rebase; then

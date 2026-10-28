@@ -125,6 +125,34 @@ case "$cmd" in
     CLAUDE_PROJECT_DIR="$root" bash "$0" set "$id" Статус готова "спека и план в $branch"
     echo "$id · спека и план в $branch"
     ;;
+  wt-sync)
+    wt=$1; cfg="$root/.claude/tw.json"
+    mkdir -p "$wt/.claude/tw-state"
+    cp "$cfg" "$wt/.claude/tw.json"
+    jq -r '.runCopy // empty | .[]' "$cfg" | while IFS= read -r f; do
+      [ -n "$f" ] && [ -e "$root/$f" ] && mkdir -p "$(dirname "$wt/$f")" && cp -R "$root/$f" "$wt/$f"
+    done
+    ;;
+  wt-deps)
+    wt=$1
+    install=$(jq -r '.runInstall // empty' "$root/.claude/tw.json")
+    pm=npm; [ -f "$wt/pnpm-lock.yaml" ] && pm=pnpm; [ -f "$wt/yarn.lock" ] && pm=yarn
+    lock=""; for l in pnpm-lock.yaml yarn.lock package-lock.json; do [ -f "$wt/$l" ] && { lock=$l; break; }; done
+    if [ -z "$install" ] && [ -f "$wt/package.json" ]; then
+      case "$pm" in
+        pnpm) install="pnpm install --frozen-lockfile --prefer-offline" ;;
+        yarn) install="yarn install --frozen-lockfile" ;;
+        *) [ -n "$lock" ] && install="npm ci" || install="npm install" ;;
+      esac
+    fi
+    [ -n "$install" ] || exit 0
+    sum=$( { echo "$install"; [ -n "$lock" ] && cat "$wt/$lock"; } | shasum | cut -c1-16)
+    [ "$(cat "$wt/.claude/tw-state/installed" 2>/dev/null)" = "$sum" ] && exit 0
+    echo "зависимости: $install"
+    mkdir -p "$wt/.claude/tw-state"
+    (cd "$wt" && eval "$install") >"$wt/.claude/tw-state/install.log" 2>&1 || exit 1
+    echo "$sum" >"$wt/.claude/tw-state/installed"
+    ;;
   root)
     echo "$root"
     ;;
