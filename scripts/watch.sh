@@ -60,7 +60,7 @@ follow() { tail -n +1 -f "$1" 2>/dev/null | jq -R --unbuffered -r "fromjson? // 
 echo "tw · просмотр исполнителя · ${root/#$HOME/~} · выход — ctrl+c"
 from=$(grep -n ' · старт · ' "$state/run.log" 2>/dev/null | tail -1 | cut -d: -f1)
 bash "$B" running || from=$(($(wc -l <"$state/run.log" 2>/dev/null || echo 0) + 1))
-( tail -n +"${from:-1}" -f "$state/run.log" 2>/dev/null | sed -u $'/ · старт · /s/^/\033[2J\033[3J\033[H/; s/$/\033[0m/; s/^\(\033\[[0-9;]*[A-Z]\)*/&\033[36m/' ) 2>/dev/null &
+( tail -n +"${from:-1}" -f "$state/run.log" 2>/dev/null | perl -CSD -Mutf8 -pe 'BEGIN { $| = 1 } chomp; my $c = / · старт · / ? "\e[2J\e[3J\e[H" : ""; my $end = / · конец · / ? "\e[2m   прогон закончен · окно можно оставить: следующий /tw:run очистит его; закрыть — ctrl+c\e[0m\n" : ""; $_ = "$c\e[36m$_\e[0m\n$end"' ) 2>/dev/null &
 lp=$!; disown $lp
 stopf() { [ -n "$tp" ] && { pkill -P "$tp" 2>/dev/null; kill "$tp" 2>/dev/null; wait "$tp" 2>/dev/null; }; }
 trap 'stopf; pkill -P $lp 2>/dev/null; kill $lp 2>/dev/null; wait 2>/dev/null' EXIT
