@@ -1,0 +1,17 @@
+#!/bin/bash
+[ -n "$FAKE_LOG" ] && echo "pnpm $*" >>"$FAKE_LOG.pnpm"
+dir=. dev=dependencies pkgs=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --filter) dir=$2; shift ;;
+    -D) dev=devDependencies ;;
+    -w|add|--lockfile-only|--save-exact) ;;
+    *) pkgs+=("$1") ;;
+  esac
+  shift
+done
+for p in "${pkgs[@]}"; do
+  n=${p%@*}; v=${p##*@}
+  jq --arg d "$dev" --arg n "$n" --arg v "$v" '.[$d][$n] = $v' "$dir/package.json" >"$dir/package.json.tmp" && mv "$dir/package.json.tmp" "$dir/package.json"
+  echo "  $n: $v" >>pnpm-lock.yaml
+done

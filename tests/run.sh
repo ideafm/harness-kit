@@ -217,6 +217,42 @@ if scenario deps-guard; then
   check "ветка с новыми зависимостями застряла" has "$(st B-002)" "ветка меняет зависимости (package.json)"
 fi
 
+if scenario deps-approved; then
+  fixture deps-approved
+  printf '{"check": "true", "runInstall": "true"}\n' >.claude/tw.json
+  printf '{"name": "p", "dependencies": {"a": "1.0.0"}}\n' >package.json
+  printf 'lockfileVersion: 9\n' >pnpm-lock.yaml
+  git add -A && git -c user.name=t -c user.email=t@t commit -qm pkg
+  prepare B-001 >/dev/null
+  tw backlog.sh add-deps B-001 . left-pad 2>/dev/null
+  check "add-deps: без версии — отказ" is "$?" 2
+  out=$(tw backlog.sh add-deps B-001 . left-pad@1.3.0)
+  check "add-deps: ставит без node_modules" grep -q "add --lockfile-only --save-exact -w left-pad@1.3.0" "$FAKE_LOG.pnpm"
+  check "add-deps: коммит в ветке задачи" is "$(git log -1 --format=%s tw/B-001)" "chore: add dependencies for B-001"
+  check "add-deps: зависимость в ветке" is "$(git show tw/B-001:package.json | jq -r '.dependencies["left-pad"]')" 1.3.0
+  check "add-deps: main не тронут" is "$(jq -r '.dependencies["left-pad"] // "нет"' package.json)" нет
+  check "add-deps: поле задачи" has "$(tw backlog.sh get B-001 Зависимости)" "left-pad@1.3.0"
+  dc=$(git log -1 --format=%H tw/B-001)
+  run B-001
+  check "утверждённые зависимости — на приёмке" is "$(st B-001)" "на приёмке"
+  check "diff для хуков — от коммита зависимостей" grep -q "B-001 .* base=$dc" "$FAKE_LOG.env"
+  tw accept.sh merge B-001 >/dev/null
+  check "утверждённые зависимости слиты" is "$(jq -r '.dependencies["left-pad"]' package.json)" 1.3.0
+  task B-002; prepare B-002 >/dev/null
+  tw backlog.sh add-deps B-002 . right-pad@1.0.0 >/dev/null
+  FAKE_MODE=adddep run B-002
+  check "своя зависимость агента — застряла сразу" has "$(st B-002)" "агент изменил зависимости сверх утверждённых (package.json)"
+  tw backlog.sh set B-002 Статус "на приёмке" >/dev/null
+  out=$(tw accept.sh merge B-002); rc=$?
+  check "своя зависимость агента — приёмка отказывает" has "$out" "сверх утверждённых (package.json)"
+  check "main без чужой зависимости" is "$(jq -r '.dependencies.evil // "нет"' package.json)" нет
+  epic E1
+  MS=E1 prepare B-003 >/dev/null
+  FAKE_MODE=adddep run B-003
+  check "своя зависимость агента — в эпик не попала" has "$(st B-003)" "сверх утверждённых (package.json)"
+  check "ветка эпика без чужой зависимости" is "$(git show tw/E1:package.json | jq -r '.dependencies.evil // "нет"')" нет
+fi
+
 if scenario noverify; then
   fixture noverify
   prepare B-001 >/dev/null

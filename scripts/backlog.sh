@@ -180,14 +180,66 @@ case "$cmd" in
     done
     ;;
   deps-changed)
-    wt=$1; ref=$2
+    wt=$1; ref=$2; to=$3
     set -- ':(glob)**/pnpm-lock.yaml' ':(glob)**/yarn.lock' ':(glob)**/package-lock.json' \
       ':(glob)**/pnpm-workspace.yaml' ':(glob)**/.npmrc' ':(glob)**/.yarnrc.yml' ':(glob)**/.pnpmfile.cjs'
-    { git -C "$wt" diff --name-only "$ref" -- "$@"; git -C "$wt" ls-files --others --exclude-standard -- "$@"; } | sort -u
-    for f in $( { git -C "$wt" diff --name-only "$ref" -- ':(glob)**/package.json'; git -C "$wt" ls-files --others --exclude-standard -- ':(glob)**/package.json'; } | sort -u); do
-      k='{dependencies, devDependencies, optionalDependencies, peerDependencies, bundledDependencies, pnpm, overrides, resolutions, workspaces} | with_entries(select(.value != null))'
-      [ "$(git -C "$wt" show "$ref:$f" 2>/dev/null | jq -Sc "$k" 2>/dev/null)" = "$(jq -Sc "$k" "$wt/$f" 2>/dev/null)" ] || echo "$f"
-    done
+    k='{dependencies, devDependencies, optionalDependencies, peerDependencies, bundledDependencies, pnpm, overrides, resolutions, workspaces} | with_entries(select(.value != null))'
+    if [ -n "$to" ]; then
+      git -C "$wt" diff --name-only "$ref" "$to" -- "$@"
+      for f in $(git -C "$wt" diff --name-only "$ref" "$to" -- ':(glob)**/package.json'); do
+        [ "$(git -C "$wt" show "$ref:$f" 2>/dev/null | jq -Sc "$k" 2>/dev/null)" = "$(git -C "$wt" show "$to:$f" 2>/dev/null | jq -Sc "$k" 2>/dev/null)" ] || echo "$f"
+      done
+    else
+      { git -C "$wt" diff --name-only "$ref" -- "$@"; git -C "$wt" ls-files --others --exclude-standard -- "$@"; } | sort -u
+      for f in $( { git -C "$wt" diff --name-only "$ref" -- ':(glob)**/package.json'; git -C "$wt" ls-files --others --exclude-standard -- ':(glob)**/package.json'; } | sort -u); do
+        [ "$(git -C "$wt" show "$ref:$f" 2>/dev/null | jq -Sc "$k" 2>/dev/null)" = "$(jq -Sc "$k" "$wt/$f" 2>/dev/null)" ] || echo "$f"
+      done
+    fi
+    ;;
+  deps-ref)
+    id=$1; b=$2; br="tw/$id"
+    mb=$(git merge-base "$b" "$br" 2>/dev/null) || { echo "$b"; exit 0; }
+    c=$(git log -1 --format=%H --fixed-strings --grep="chore: add dependencies for $id" "$mb..$br")
+    echo "${c:-$mb}"
+    ;;
+  add-deps)
+    id=$1; ws=$2; shift 2
+    dev=""; [ "$1" = --dev ] && { dev=1; shift; }
+    [ -n "$id" ] && [ -n "$ws" ] && [ $# -gt 0 ] || { echo "backlog.sh add-deps B-NNN <путь пакета или .> [--dev] имя@версия…" >&2; exit 2; }
+    for d in "$@"; do [[ "$d" =~ ^(@[a-z0-9._-]+/)?[a-z0-9._-]+@[0-9][0-9A-Za-z.+-]*$ ]] || { echo "нужна точная версия: $d (имя@1.2.3)" >&2; exit 2; }; done
+    br="tw/$id"
+    git rev-parse -q --verify "refs/heads/$br" >/dev/null || { echo "нет ветки $br" >&2; exit 2; }
+    tmp=$(mktemp -d)
+    git worktree add -q --detach "$tmp/w" "$br" || { rm -rf "$tmp"; exit 2; }
+    if [ -f "$tmp/w/pnpm-lock.yaml" ]; then
+      cmd=(pnpm); [ "$ws" = . ] || cmd+=(--filter "$ws")
+      cmd+=(add --lockfile-only --save-exact); [ "$ws" = . ] && cmd+=(-w)
+    elif [ -f "$tmp/w/package-lock.json" ]; then
+      cmd=(npm install --package-lock-only --ignore-scripts --save-exact); [ "$ws" = . ] || cmd+=(-w "$ws")
+    else
+      git worktree remove --force "$tmp/w"; rm -rf "$tmp"
+      echo "add-deps умеет pnpm и npm с lock-файлом — поставь сам и закоммить в $br" >&2; exit 2
+    fi
+    [ -n "$dev" ] && cmd+=(-D)
+    if ! (cd "$tmp/w" && "${cmd[@]}" "$@") >"$tmp/log" 2>&1; then
+      tail -15 "$tmp/log" >&2; git worktree remove --force "$tmp/w"; rm -rf "$tmp"; exit 1
+    fi
+    pairs=()
+    for f in $(git -C "$tmp/w" status --porcelain --untracked-files=no | awk '{print $2}'); do pairs+=("$f=$tmp/w/$f"); done
+    commit_to "$br" "chore: add dependencies for $id" ${pairs[@]+"${pairs[@]}"}; rc=$?
+    git worktree remove --force "$tmp/w"; rm -rf "$tmp"
+    [ $rc = 0 ] || exit $rc
+    f=$(file "$id")
+    prev=$(field "$f" Зависимости)
+    list="$*${ws:+ → $ws}${dev:+ (dev)}"
+    if [ -n "$prev" ] && [ "$prev" != "—" ]; then list="$prev; $list"; fi
+    if grep -q '^- \*\*Зависимости:\*\*' "$f"; then
+      L="$list" perl -CSD -Mutf8 -i -pe 's/^- \*\*Зависимости:\*\* .*/- **Зависимости:** $ENV{L}/' "$f"
+    else
+      L="$list" perl -CSD -Mutf8 -i -pe 'print "- **Зависимости:** $ENV{L}\n" if /^- \*\*Спека:\*\*/' "$f"
+    fi
+    journal "$f" "зависимости утверждены и добавлены в $br: $*"
+    echo "добавлено в $br: $*"
     ;;
   wt-deps)
     wt=$1

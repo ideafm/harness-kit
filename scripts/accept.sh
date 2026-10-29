@@ -55,11 +55,14 @@ merge_check() {
     sandbox_profile "$awt" "$TW_SANDBOX"
   fi
   echo "tw: проверяю результат слияния${TW_SANDBOX:+ в песочнице}: $cmd"
-  out=$(bash "$B" wt-deps "$awt" "$base"); rc=$?
-  if [ $rc != 0 ]; then
-    [ $rc = 3 ] && echo "tw: $out. $base не изменён: git diff $base...$branch -- <файлы>" || echo "tw: не встали зависимости для проверки слияния, $base не изменён. Лог: ${awt#"$root"/}/.claude/tw-state/install.log"
-    git -C "$awt" checkout -q --detach "$base"; return 1
+  if [[ "$id" == B-* ]]; then
+    dchanged=$(bash "$B" deps-changed "$root" "$(bash "$B" deps-ref "$id" "$base")" "$branch" | tr '\n' ' ' | sed 's/ $//')
+    if [ -n "$dchanged" ]; then
+      echo "tw: ветка меняет зависимости сверх утверждённых ($dchanged) — $base не изменён. Посмотри: git diff $base...$branch -- $dchanged"
+      git -C "$awt" checkout -q --detach "$base"; return 1
+    fi
   fi
+  out=$(bash "$B" wt-deps "$awt") || { echo "tw: не встали зависимости для проверки слияния, $base не изменён. Лог: ${awt#"$root"/}/.claude/tw-state/install.log"; git -C "$awt" checkout -q --detach "$base"; return 1; }
   [ -n "$out" ] && echo "tw: $out"
   export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-$(basename "$root" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')}
   if [ -n "$setup" ] && ! (cd "$root" && eval "$setup") >"$log" 2>&1; then
@@ -85,7 +88,8 @@ if [ "$1" = look ] && [[ "$2" =~ ^[BE]-?[0-9]+$ ]]; then
   fi
   git -C "$lwt" checkout -q --detach "$branch" && git -C "$lwt" reset -q --hard && git -C "$lwt" clean -qfd || exit 1
   bash "$B" wt-sync "$lwt"
-  out=$(bash "$B" wt-deps "$lwt" "$base"); rc=$?
+  ref=$base; [[ "$2" == B-* ]] && ref=$(bash "$B" deps-ref "$2" "$base")
+  out=$(bash "$B" wt-deps "$lwt" "$ref"); rc=$?
   if [ $rc = 3 ]; then
     echo "tw: $out. Посмотри: git diff $base...$branch -- <файлы>; поставить: cd $(H="$HOME" perl -pe 's/^\Q$ENV{H}\E/~/i' <<<"$lwt") && <установка>"
   elif [ $rc != 0 ]; then

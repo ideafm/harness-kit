@@ -158,7 +158,7 @@ worker() {
     cat <<EOF
 Задача $id из бэклога. План: $plan. Спецификация — по ссылке в плане.
 Исполни план по разделу «Исполнение» skill tw:plan, с первой незакрытой задачи. Человека рядом нет: вопросов не задавай. Если без решения человека дальше нельзя — запиши в журнал плана «нужен человек: <что решить>» и закончи.
-Не коммить, не меняй ветку и не трогай docs/backlog/ — это делает исполнитель. Лимиты тоже отслеживает исполнитель: rate-limits.json не читай. Код меняй только через Edit и Write, не через sed, perl или python. Команды Bash запускай по одной, без `;`, `&&`, скобок и перенаправления в файлы: составные команды требуют подтверждения, а подтвердить некому. Окружение (база, контейнеры) уже поднято — docker и infra-скрипты не запускай. Bash работает в песочнице: писать можно только в этой папке, сети наружу нет.
+Не коммить, не меняй ветку и не трогай docs/backlog/ — это делает исполнитель. Лимиты тоже отслеживает исполнитель: rate-limits.json не читай. Код меняй только через Edit и Write, не через sed, perl или python. Команды Bash запускай по одной, без `;`, `&&`, скобок и перенаправления в файлы: составные команды требуют подтверждения, а подтвердить некому. Окружение (база, контейнеры) уже поднято — docker и infra-скрипты не запускай. Зависимости не добавляй и не меняй — ни командой, ни правкой package.json или lock-файла: утверждённые уже стоят (поле «Зависимости» задачи). Без новой зависимости никак — запиши в журнал плана «нужен человек: зависимость <имя> — <зачем>» и закончи. Bash работает в песочнице: писать можно только в этой папке, сети наружу нет.
 
 Текст задачи:
 
@@ -175,8 +175,10 @@ EOF
       why="конфликт с эпиком $m: $(w diff --name-only --diff-filter=U | tr '\n' ' ' | sed 's/ *$//')"
       w merge --abort 2>/dev/null; rmdir "$lock"; lock=""; return 1
     fi
-    local dout
-    dout=$(bash "$B" wt-deps "$wt" "$old") || { why="в эпике $m: ${dout:-не встали зависимости}"; rmdir "$lock"; lock=""; return 1; }
+    local dchanged
+    dchanged=$(bash "$B" deps-changed "$wt" "$(bash "$B" deps-ref "$id" "$old")" "$branch" | tr '\n' ' ' | sed 's/ $//')
+    [ -z "$dchanged" ] || { why="ветка меняет зависимости ($dchanged) — их установка запускает чужой код, проверь и поставь сам"; w merge --abort 2>/dev/null; w checkout -q --detach "$old"; rmdir "$lock"; lock=""; return 1; }
+    bash "$B" wt-deps "$wt" >/dev/null || { why="в эпике $m не встали зависимости"; rmdir "$lock"; lock=""; return 1; }
     cmd=$(CLAUDE_PROJECT_DIR="$wt" bash -c 'source "$1"; tw_check_cmd' _ "$plugin/hooks/lib.sh")
     if [ -n "$cmd" ] && ! (export CLAUDE_PROJECT_DIR="$wt" NO_COLOR=1 ${env_args[@]+"${env_args[@]}"} && sandboxed "$wt" "$cmd") >"$wstate/epic-check.log" 2>&1; then
       why="в эпике $m после слияния проверки красные (лог: ${wstate#"$root"/}/epic-check.log)"; rmdir "$lock"; lock=""; return 1
@@ -240,7 +242,7 @@ EOF
   bash "$B" set "$id" Ветка "$branch"
 
   local out_deps rc
-  out_deps=$(bash "$B" wt-deps "$wt" "${ebranch:-$base}"); rc=$?
+  out_deps=$(bash "$B" wt-deps "$wt" "$(bash "$B" deps-ref "$id" "${ebranch:-$base}")"); rc=$?
   if [ $rc = 3 ]; then
     release; stuck "$out_deps"; result stuck
   elif [ $rc != 0 ]; then
@@ -267,7 +269,7 @@ EOF
     args=(-p "$(prompt_for)" --permission-mode acceptEdits --output-format stream-json --verbose --allowedTools "${allow[@]}")
     [ -n "$task_model" ] && args+=(--model "$task_model")
     args+=(--plugin-dir "$plugin" --strict-mcp-config --settings "$plugins_off")
-    (cd "$wt" && export CLAUDE_PROJECT_DIR="$wt" TW_SLOT="$slot" TW_DIFF_BASE=$(git merge-base "${ebranch:-$base}" "$branch") ${env_args[@]+"${env_args[@]}"} && exec claude "${args[@]}") </dev/null >"$out" 2>&1 &
+    (cd "$wt" && export CLAUDE_PROJECT_DIR="$wt" TW_SLOT="$slot" TW_DIFF_BASE=$(bash "$B" deps-ref "$id" "${ebranch:-$base}") ${env_args[@]+"${env_args[@]}"} && exec claude "${args[@]}") </dev/null >"$out" 2>&1 &
     cpid=$!
     wait "$cpid"
     cpid=""
@@ -287,6 +289,10 @@ EOF
     fi
 
     res=$(outcome)
+    if [ "$res" = ok ]; then
+      dchanged=$(bash "$B" deps-changed "$wt" "$(bash "$B" deps-ref "$id" "${ebranch:-$base}")" | tr '\n' ' ' | sed 's/ $//')
+      [ -n "$dchanged" ] && res="stuck:нужен человек: агент изменил зависимости сверх утверждённых ($dchanged) — посмотри diff; нужны — утверди через /tw:run $id"
+    fi
     for k in test scope verify; do echo "$k: $(cat "$wstate/last-$k" 2>/dev/null || echo 'не было')"; done >"$runs/$id.checks"
     rm -f "$runs/$id.verify"
     [ -f "$wstate/verify-$(basename "$plan" .md)" ] && cp "$wstate/verify-$(basename "$plan" .md)" "$runs/$id.verify"
