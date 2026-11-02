@@ -1,0 +1,5 @@
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "tw"
+      description: "Контроллер задач Tw текущего проекта"
