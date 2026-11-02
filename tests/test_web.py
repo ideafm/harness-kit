@@ -7,6 +7,8 @@ from unittest.mock import Mock, patch
 
 from tw_web.launcher import NoRedirect, Runtime, main
 from tw_web.server import PORT, Application, make_server
+from tw_web.preview import preview_command
+from tw_web.operator import main as operator_main
 
 
 class ApplicationTests(unittest.TestCase):
@@ -127,6 +129,38 @@ class LifecycleTests(unittest.TestCase):
     def test_redirect_is_not_followed(self):
         with self.assertRaises(ValueError):
             NoRedirect().redirect_request(None, None, None, None, None, 'https://example.com')
+
+    def test_preview_rejects_invalid_identifiers_before_reading_state(self):
+        with patch('tw_web.preview.task_details') as details:
+            for ident in (0, -1, True, '../1'):
+                with self.assertRaises(ValueError):
+                    preview_command(ident)
+            details.assert_not_called()
+
+    def test_preview_rejects_task_which_is_still_running(self):
+        with patch('tw_web.preview.task_details', return_value={'state': 'running', 'stage': 'implement'}):
+            with self.assertRaisesRegex(ValueError, 'не готова'):
+                preview_command(1)
+
+    def test_operator_command_delegates_to_fixed_controller_project(self):
+        with patch('tw_web.operator.subprocess.run', return_value=Mock(returncode=0)) as run:
+            operator_main(['request-changes', 'TASK-001', 'Исправь'])
+            command = run.call_args.args[0]
+            self.assertEqual(command[-3:], ['request-changes', 'TASK-001', 'Исправь'])
+            self.assertIn('--project', command)
+            self.assertFalse(run.call_args.kwargs['shell'])
+
+    def test_operator_command_rejects_unknown_action(self):
+        with patch('tw_web.operator.subprocess.run') as run:
+            with self.assertRaises(ValueError):
+                operator_main(['shell', 'anything'])
+            run.assert_not_called()
+
+    def test_operator_command_preserves_controller_failure(self):
+        with patch('tw_web.operator.subprocess.run', return_value=Mock(returncode=1)):
+            with self.assertRaises(SystemExit) as error:
+                operator_main(['reject', 'TASK-001'])
+            self.assertEqual(error.exception.code, 1)
 
 
 if __name__ == '__main__':

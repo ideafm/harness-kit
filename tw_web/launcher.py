@@ -129,6 +129,13 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def main(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == 'preview':
+        from .preview import main as preview_main
+        return preview_main(arguments[1:])
+    if arguments and arguments[0] in {'accept', 'request-changes', 'reject'}:
+        from .operator import main as operator_main
+        return operator_main(arguments)
     parser = argparse.ArgumentParser(prog='tw-web', description='Локальная панель Tw')
     parser.add_argument('command', nargs='?', default='open', choices=['open', 'start', 'status', 'stop', 'serve'])
     parser.add_argument('--project', type=Path, default=ROOT)
@@ -136,6 +143,20 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         runtime = Runtime(args.project)
+        if args.command in {'open', 'start'} and not runtime.running():
+            choice = runtime.home / 'preview.json'
+            if choice.exists() or choice.is_symlink():
+                descriptor = os.open(choice, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(descriptor) as handle:
+                    selected = json.load(handle)
+                ident = selected.get('task') if isinstance(selected, dict) else None
+                if type(ident) is not int or ident < 1:
+                    raise ValueError('Некорректный выбранный результат панели')
+                from .preview import main as preview_main
+                options = [str(ident)]
+                if args.no_browser or args.command == 'start':
+                    options.append('--no-browser')
+                return preview_main(options)
         if args.command == 'serve':
             runtime.serve()
         elif args.command == 'stop':

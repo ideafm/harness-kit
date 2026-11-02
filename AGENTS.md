@@ -30,3 +30,15 @@ Run `python3 -m unittest discover -s tests -v` for this project.
   explicit user authorization. Previous permission for lab/taskboard does not
   authorize commits here.
 - Communicate and write product documentation in Russian.
+
+## Tw workflow
+
+This project uses Tw. In a Tw session, use the `tw` skill and MCP tools for
+implementation tasks; do not edit the original project directly. The controller
+saves a specification and plan, publishes a summary, then executes in isolation.
+Do not read secrets, env files or hidden paths, use SSH, or bypass sandbox.
+General task approval does not grant protected access. Accept results only after
+the human explicitly runs the operator command; never accept on their behalf.
+If Tw tools are unavailable, stop task execution and ask to launch `tw`.
+When the controller supplies stage context, execute that stage directly
+in its isolated workspace; do not enqueue a nested Tw task.
