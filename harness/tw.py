@@ -150,6 +150,8 @@ def main(argv=None):
               "  tw run TASK-NNN / worker       Исполнять без чата\n"
               "  tw pause / resume TASK-NNN     Управление задачей\n"
               "  tw accept TASK-NNN --confirm TASK-NNN\n"
+              "  tw request-changes TASK-NNN 'замечания'\n"
+              "  tw reject TASK-NNN --reason 'причина' --confirm TASK-NNN\n"
               "  tw stop                       Остановить фоновый worker\n\n"
               "Настройки оболочки и глобальные конфиги не изменяются.")
         return

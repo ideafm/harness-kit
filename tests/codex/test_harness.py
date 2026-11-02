@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from harness.approval import approve, revise
+from harness.decisions import decide
 from harness.cli import main
 from harness.runner import Interrupted, RateLimited, Runner, execute, lock
 from harness.security import export_snapshot, permission_args, profile, protected, regular_files, safe_env
@@ -235,6 +236,56 @@ class HarnessTests(unittest.TestCase):
         task, _ = self.run_task(backend)
         self.assertEqual(task['state'], 'review')
         self.assertEqual(backend.calls, ['implement', 'review'])
+
+    def test_user_can_return_reviewed_result_with_feedback(self):
+        self.run_task()
+        self.cli('request-changes', '1', 'Добавь понятное пустое состояние')
+        task = self.store.get(1)
+        self.assertEqual((task['state'], task['stage']), ('queued', 'implement'))
+        self.assertNotIn('review_verdict', task['data'])
+        self.assertIn('пустое состояние', task['data']['feedback'])
+        self.assertEqual(task['data']['attempts']['implement'], 0)
+        event = self.store.events(1)[-1]
+        self.assertEqual(event['kind'], 'changes_requested')
+        self.assertEqual(event['data']['previous_verdict'], 'pass')
+        backend = FakeCodex()
+        task, _ = self.run_task(backend)
+        self.assertEqual(task['state'], 'review')
+        self.assertEqual(backend.calls, ['implement', 'review'])
+
+    def test_rejection_is_terminal_and_preserves_result(self):
+        self.run_task()
+        self.cli('reject', '1', '--reason', 'Решение больше не требуется', '--confirm', 'TASK-001')
+        task = self.store.get(1)
+        self.assertEqual((task['state'], task['stage']), ('rejected', 'done'))
+        self.assertTrue((self.store.folder(1) / 'changes.patch').is_file())
+        self.assertTrue((self.store.folder(1) / 'workspace/app.py').is_file())
+        self.assertIn('rejected', self.cli('status'))
+        for operation in (('resume', '1'), ('answer', '1', 'Продолжай')):
+            with self.assertRaises(SystemExit):
+                self.cli(*operation)
+        with self.assertRaises(ValueError):
+            self.run_task()
+
+    def test_result_decisions_require_review_reason_and_exact_confirmation(self):
+        with self.assertRaises(ValueError):
+            decide(self.store, 1, 'request-changes', 'Исправь')
+        self.run_task()
+        for action, text, confirmation in (('reject', 'Причина', 'TASK-002'),
+                                           ('reject', '', 'TASK-001'),
+                                           ('request-changes', '   ', None)):
+            with self.assertRaises(ValueError):
+                decide(self.store, 1, action, text, confirmation)
+        self.assertEqual(self.store.get(1)['state'], 'review')
+
+    def test_stale_rejection_cannot_overwrite_another_operator(self):
+        self.run_task()
+        stale = self.store.get(1)
+        decide(self.store, 1, 'request-changes', 'Исправь')
+        with patch.object(self.store, 'get', return_value=stale):
+            with self.assertRaises(RuntimeError):
+                decide(self.store, 1, 'reject', 'Отклонить', 'TASK-001')
+        self.assertEqual(self.store.get(1)['state'], 'queued')
 
     def test_snapshot_excludes_secrets_hidden_and_symlinks(self):
         manifest = export_snapshot(self.root, self.root / ".harness/export", "HEAD")

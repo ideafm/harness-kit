@@ -1,10 +1,12 @@
 import json
 import sqlite3
 import time
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 
-STATES = {"queued", "running", "waiting", "awaiting_approval", "rate_limited", "paused", "blocked", "review", "accepted"}
+STATES = {"queued", "running", "waiting", "awaiting_approval", "rate_limited", "paused", "blocked", "review", "accepted", "rejected"}
 
 
 class StateChanged(RuntimeError):
@@ -29,9 +31,28 @@ class Store:
                 task INTEGER NOT NULL, time REAL NOT NULL,
                 kind TEXT NOT NULL, data TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS operations (
+                id TEXT PRIMARY KEY, request_key TEXT UNIQUE NOT NULL,
+                payload_hash TEXT NOT NULL, data TEXT NOT NULL
+            );
         """)
         stat = (self.home / "state.sqlite").stat()
         self.identity = (stat.st_dev, stat.st_ino)
+
+    @contextmanager
+    def transaction(self):
+        nested = self.db.in_transaction
+        name = 'operation_' + uuid.uuid4().hex
+        self.db.execute('SAVEPOINT ' + name if nested else 'BEGIN IMMEDIATE')
+        try:
+            yield
+        except BaseException:
+            self.db.execute('ROLLBACK TO ' + name if nested else 'ROLLBACK')
+            if nested:
+                self.db.execute('RELEASE ' + name)
+            raise
+        else:
+            self.db.execute('RELEASE ' + name if nested else 'COMMIT')
 
     def ensure_current(self):
         try:
@@ -45,7 +66,7 @@ class Store:
         from .approval import validate_mode
         validate_mode(approval_mode)
         self.ensure_current()
-        with self.db:
+        with self.transaction():
             row = self.db.execute(
                 "INSERT INTO tasks(state,stage,data,updated) VALUES(?,?,?,?)",
                 ("queued", "plan", json.dumps({"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode}), time.time()),
@@ -69,7 +90,7 @@ class Store:
         self.ensure_current()
         if task["state"] not in STATES:
             raise ValueError("Неизвестное состояние")
-        with self.db:
+        with self.transaction():
             parameters = [task["state"], task["stage"], json.dumps(task["data"], ensure_ascii=False), time.time(), task["id"]]
             condition = ""
             if expected is not None:
@@ -89,7 +110,7 @@ class Store:
 
     def pause(self, ident):
         self.ensure_current()
-        with self.db:
+        with self.transaction():
             changed = self.db.execute("UPDATE tasks SET state='paused',updated=? WHERE id=? AND state IN ('queued','running','rate_limited')",
                                       (time.time(), ident))
             if changed.rowcount != 1:

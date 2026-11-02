@@ -98,7 +98,7 @@ class TwTests(unittest.TestCase):
         server = Server(self.service)
         result = server.call('tw_submit', {'request': 'Review plan first', 'start': False, 'approval': 'approve-plan'})
         self.assertEqual(result['task']['approval_mode'], 'approve-plan')
-        for name in ('tw_approve_plan', 'tw_revise_plan'):
+        for name in ('tw_approve_plan', 'tw_revise_plan', 'tw_reject', 'tw_request_changes'):
             with self.assertRaises(ValueError):
                 server.call(name, {'task': 1})
 

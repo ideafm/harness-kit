@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from .approval import MODES, approve, revise
+from .decisions import decide
 from .runner import Runner, lock
 from .security import doctor, git
 from .state import Store, atomic_json
@@ -28,6 +29,11 @@ def parser():
     add.add_argument("--approval", choices=MODES, default="auto")
     sub.add_parser("status", help="Показать задачи и ожидания")
     sub.add_parser("doctor", help="Проверить ограничения на безопасных canary-файлах")
+    baseline = sub.add_parser('prepare-baseline', help='Подготовить основу из проверенного результата задачи')
+    baseline.add_argument('task', type=task_id)
+    baseline.add_argument('--from-task', required=True, type=task_id)
+    retry_review = sub.add_parser('retry-review', help='Повторить ревью проверенного неизменённого результата')
+    retry_review.add_argument('task', type=task_id)
     for action in ("run", "show", "pause", "resume", "accept"):
         child = sub.add_parser(action)
         child.add_argument("task", type=task_id)
@@ -43,6 +49,13 @@ def parser():
     revision = sub.add_parser("revise-plan", help="Вернуть план с замечаниями")
     revision.add_argument("task", type=task_id)
     revision.add_argument("text")
+    changes = sub.add_parser("request-changes", help="Вернуть результат на доработку")
+    changes.add_argument("task", type=task_id)
+    changes.add_argument("text")
+    rejection = sub.add_parser("reject", help="Окончательно отклонить результат с сохранением истории")
+    rejection.add_argument("task", type=task_id)
+    rejection.add_argument("--reason", required=True)
+    rejection.add_argument("--confirm", required=True)
     worker = sub.add_parser("worker", help="Обрабатывать очередь до Ctrl-C")
     worker.add_argument("--once", action="store_true")
     return command
@@ -124,12 +137,20 @@ def dispatch_store(args, store):
         print(summary(store.add(args.request, getattr(args, "approval", "auto"))))
     elif action == "status":
         priority = {"waiting": 0, "awaiting_approval": 0, "blocked": 1, "review": 2, "running": 3, "rate_limited": 4,
-                    "paused": 5, "queued": 6, "accepted": 7}
+                    "paused": 5, "queued": 6, "accepted": 7, "rejected": 8}
         for task in sorted(store.tasks(), key=lambda t: (priority[t["state"]], t["id"])):
             print(summary(task))
     elif action == "doctor":
         config = json.loads((store.home / "config.json").read_text())
         print(doctor(config["codex"]))
+    elif action == 'retry-review':
+        from .recovery import retry_review
+        retry_review(store, args.task)
+        print('Проверенный результат направлен на повторное ревью.')
+    elif action == 'prepare-baseline':
+        from .baseline import prepare
+        prepare(store, args.task, args.from_task)
+        print('Основа подготовлена; приёмка и применение не выполнялись. Для продолжения используйте answer/resume.')
     elif action == "worker":
         runner = Runner(store)
         with lock(store, "worker.lock"):
@@ -156,6 +177,11 @@ def dispatch_store(args, store):
     elif action == "revise-plan":
         revise(store, args.task, args.text)
         print("Замечания сохранены. Планирование вернулось в очередь.")
+    elif action in {"request-changes", "reject"}:
+        text = args.text if action == "request-changes" else args.reason
+        decide(store, args.task, action, text, getattr(args, "confirm", None))
+        print("Результат возвращён на доработку; задача в очереди." if action == "request-changes"
+              else "Результат отклонён. История и рабочая копия сохранены.")
     else:
         task = store.get(args.task)
         initial_state = task["state"]
@@ -174,7 +200,9 @@ def dispatch_store(args, store):
             task["state"] = "queued"
             data.pop("reason", None)
             previous_attempts = dict(data["attempts"])
-            data["attempts"][task["stage"]] = 0
+            stages = ('plan', 'implement', 'check', 'review')
+            for stage in stages[stages.index(task['stage']):]:
+                data['attempts'][stage] = 0
             store.save(task, "resume_requested", {"previous_attempts": previous_attempts}, expected=initial_state)
         elif action == "answer":
             if task["state"] != "waiting" or not args.text.strip():
@@ -193,7 +221,7 @@ def dispatch_store(args, store):
             if previous != data["changes"]:
                 raise ValueError("Рабочая копия изменилась после ревью; приёмка запрещена")
             task["state"] = "accepted"
-            store.save(task, "accepted", expected=initial_state)
+            store.save(task, "accepted", expected=initial_state, expected_updated=task['updated'])
             print("Приёмка записана. Исходная ветка не изменена. Diff: " + str(store.folder(args.task) / "changes.patch"))
 
 

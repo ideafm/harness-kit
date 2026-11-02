@@ -1,5 +1,9 @@
 # Harness Kit
 
+Read `docs/PROJECT-CONTEXT.md` at the start of a session for the user's product
+goal, current handoff and next steps. The first-pass runner below is a foundation,
+not the full product scope. Preserve the safety rules in this file.
+
 Build an autonomous Codex development runner. The active design is in
 `docs/specs/2026-11-02-codex-harness.md`; the implementation ledger is in
 `docs/plans/2026-11-02-codex-harness.md`.

@@ -13,6 +13,7 @@ from pathlib import Path
 from .approval import requires_approval, verify_documents, version
 from .security import doctor, export_snapshot, git, permission_args, protected, regular_files, safe_env, sandbox_command, toml
 from .state import StateChanged, atomic_json
+from .quota import Guard, QuotaPause
 
 
 SCHEMA = {
@@ -64,15 +65,15 @@ def lock(store, name="runner.lock"):
         yield
 
 
-def execute(command, cwd, output, timeout, interrupted=lambda: False, input_text=None):
+def execute(command, cwd, output, timeout, interrupted=lambda: False, input_text=None, env=None, active_folder=None):
     output = Path(output)
     request = output.with_suffix(".request.txt")
     if input_text:
         request.write_text(input_text)
     with output.open("w") as log, (request.open("rb") if input_text else open(os.devnull, "rb")) as source:
-        process = subprocess.Popen(command, cwd=cwd, env=safe_env(), stdin=source,
+        process = subprocess.Popen(command, cwd=cwd, env=safe_env() if env is None else env, stdin=source,
                                    stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        active = output.parent / "active.json"
+        active = (Path(active_folder) if active_folder else output.parent) / "active.json"
         atomic_json(active, {"pid": process.pid, "command": command[0]})
         try:
             deadline = time.monotonic() + timeout
@@ -167,9 +168,13 @@ class Runner:
         self.config = json.loads((store.home / "config.json").read_text())
         self.backend = backend or Codex(self.config)
         self.check_override = check
+        self.quota = Guard(store, self.config)
 
     def interrupted(self, ident):
-        return self.store.get(ident)["state"] != "running"
+        if self.store.get(ident)["state"] != "running":
+            return True
+        self.quota.check()
+        return False
 
     def persist(self, task, kind, detail=None):
         self.store.save(task, kind, detail, expected="running")
@@ -198,9 +203,12 @@ class Runner:
                 task["state"] = "running"
                 self.store.save(task, "started", {"stage": task["stage"]}, expected=previous_state)
                 self.prepare(task)
+                previous_attempts = dict(task['data']['attempts'])
                 while task["stage"] != "done":
+                    previous_attempts = dict(task['data']['attempts'])
                     if self.interrupted(ident):
                         raise Interrupted()
+                    self.quota.check(starting=True)
                     self.step(task)
                     if task["state"] != "running":
                         break
@@ -213,6 +221,12 @@ class Runner:
                 task["state"] = "paused"
                 self.store.save(task, "paused", {"reason": "interrupt"})
                 raise
+            except QuotaPause as error:
+                task['data']['attempts'] = previous_attempts
+                task['data'].update(retry_at=error.retry_at, reason=str(error))
+                task['state'] = 'rate_limited'
+                if self.store.get(ident)['state'] == 'running':
+                    self.persist(task, 'quota_wait', {'retry_at': error.retry_at, 'reason': str(error)})
             except RateLimited:
                 count = task["data"].get("limit_count", 0) + 1
                 task["data"].update(limit_count=count, retry_at=time.time() + min(300 * 2 ** min(count - 1, 6), 18000),
@@ -220,7 +234,7 @@ class Runner:
                 attempts = task["data"]["attempts"]
                 attempts[task["stage"]] = max(0, attempts.get(task["stage"], 1) - 1)
                 task["state"] = "rate_limited"
-                if not self.interrupted(ident):
+                if self.store.get(ident)['state'] == 'running':
                     self.persist(task, "rate_limited", {"retry_at": task["data"]["retry_at"]})
             except Exception as error:
                 if self.store.get(ident)["state"] == "paused":
@@ -233,6 +247,10 @@ class Runner:
     def prepare(self, task):
         data = task["data"]
         folder = self.store.folder(task["id"])
+        if (folder / 'baseline-preparing.json').exists():
+            raise RuntimeError('Незавершённая подготовка основы; выполнение запрещено')
+        from .baseline import verify
+        verify(self.store, task)
         workspace = folder / "workspace"
         if "base" not in data:
             data["base"] = git(self.store.root, "rev-parse", "HEAD").decode().strip()
@@ -249,8 +267,16 @@ class Runner:
     def prompt(self, task):
         data = task["data"]
         context = {k: data.get(k) for k in ("request", "answers", "specification", "plan", "criteria", "files", "feedback",
-                                          "approval_mode", "effective_approval", "plan_feedback")}
+                                          "approval_mode", "effective_approval", "plan_feedback", "runtime_context", "technical_resolutions")}
         context["controller_check"] = self.config["check"]
+        context['controller_stage'] = task['stage']
+        if task['stage'] in {'implement', 'review'} and data.get('plan_approval'):
+            verify_documents(self.store, task)
+            context['controller_plan_authorization'] = {
+                'approved': data['plan_approval']['version'] == data['plan_version'],
+                'version': data['plan_version'], 'approval': data['plan_approval']}
+        if data.get('input_baseline'):
+            context['controller_input_baseline'] = {k: v for k, v in data['input_baseline'].items() if k != 'manifest'}
         context["python_executable"] = str(Path(sys.executable).resolve())
         project_instructions = Path(data["workspace"]) / "AGENTS.md"
         if project_instructions.is_file() and not project_instructions.is_symlink():
@@ -263,12 +289,29 @@ class Runner:
             context["controller_changes"] = data["changes"]
             context["controller_check_receipt"] = data["check_receipt"]
             context["controller_check_log"] = (folder / "check.log").read_text(errors="replace")[-16000:]
+            context['controller_authorization_events'] = [event for event in self.store.events(task['id'])
+                if event['kind'] in {'runtime_prepared', 'plan_approved'}]
+            frontend_receipt = folder / 'frontend-receipt.json'
+            if data.get('frontend_toolchain') and frontend_receipt.is_file():
+                receipt = json.loads(frontend_receipt.read_text())
+                context['controller_frontend_receipt'] = {key: receipt[key] for key in ('source_digest', 'checks')}
+                context['controller_frontend_receipt']['toolchain'] = {key: receipt['toolchain'][key] for key in
+                    ('node_sha256', 'runtime_sha256', 'dependencies_sha256', 'package_sha256', 'lock_sha256', 'versions')}
+            engine_receipt = self.store.home / 'engine-receipt.json'
+            if engine_receipt.is_file():
+                context['controller_engine_receipt'] = json.loads(engine_receipt.read_text())
         instructions = {
             "plan": "Исследуй код только чтением. Подготовь specification и plan в Markdown, criteria и точный files: список файлов для изменения (без каталогов). Обоснуй допущения. Ничего не меняй. summary — краткая сводка для человека перед исполнением. Оцени risk: low/high/unknown и scope: small/large/unknown; объясни approval_reason. Данные, авторизация, публичный API, инфраструктура и правила безопасности — high; неопределённость — unknown. Большая задача с несколькими независимыми частями — large: предложи декомпозицию в плане. Явное требование пользователя согласовать план обязательно; утверждать его за человека нельзя.",
             "implement": "Реализуй план. Сначала сверяй существующие изменения с планом: это может быть продолжение после сбоя. Меняй только перечисленные files. Для Python используй python_executable из контекста с флагом -B. Проверки controller_check контроллер запустит сам после ответа. Если обычная локальная проверка недоступна, укажи это в summary и передай работу контроллеру; не запрашивай расширения прав для альтернативного интерпретатора. Не утверждай, что независимые проверки пройдены.",
             "review": "Ты независимый ревьюер со свежим контекстом. Ничего не меняй. Проверь каждый критерий по коду и тестам, приложи evidence по каждому пункту. verdict: pass только при доказательстве всех критериев; fail при дефекте; human если нужна ручная проверка. Не доверяй заявлениям исполнителя. controller_diff, controller_changes и controller_check_receipt предоставлены контроллером, а не исполнителем: это доказательства состава изменений и успешного запуска проверок на текущем дереве. Проверь по diff, что прежние тесты не ослаблены. Политика read-only намеренная: не запускай тесты, создающие файлы, и не запрашивай ради их повтора расширение прав. Для выполнения тестов используй receipt и controller_check_log как доказательство от контроллера, затем независимо изучи реализацию и тесты. Не утверждай, что лично перезапускал тесты. Если diff обрезан и существенных доказательств не хватает, верни done с verdict human и объяснением.",
         }
-        return RULES + "\n" + instructions[task["stage"]] + "\nКонтекст задачи:\n" + json.dumps(context, ensure_ascii=False)
+        review_scope = ('Учитывай controller_stage и controller_plan_authorization: подтверждение точной версии '
+            'разрешает реализацию после этапа подготовки плана. Исторические ограничения «сейчас только план» '
+            'не являются запретом позднее утверждённой реализации. Не удаляй содержательные критерии. '
+            'Если критерий противоречит утверждённому этапу и нельзя однозначно разрешить конфликт, '
+            'верни human с точным объяснением, не отправляй код на бессмысленную доработку. '
+            if task['stage'] == 'review' else '')
+        return RULES + "\n" + instructions[task["stage"]] + '\n' + review_scope + "\nКонтекст задачи:\n" + json.dumps(context, ensure_ascii=False)
 
     def step(self, task):
         stage = task["stage"]
@@ -290,6 +333,9 @@ class Runner:
             self.report(task)
             if self.check_override:
                 code = self.check_override(workspace, folder)
+            elif data.get('frontend_toolchain') == 'next-ui':
+                from .node import check as frontend_check
+                code = frontend_check(workspace, folder, self.config, lambda: self.interrupted(task['id']))
             else:
                 code = execute(sandbox_command(self.config["codex"], workspace, True, self.config["check"]),
                                workspace, folder / "check.log", self.config["timeout"], lambda: self.interrupted(task["id"]))
@@ -310,7 +356,7 @@ class Runner:
             if data["changes"] != data["check_receipt"]["changes"]:
                 raise RuntimeError("Рабочая копия изменилась после проверок; ревью запрещено")
         result = self.backend.call(stage, workspace, folder, self.prompt(task), lambda: self.interrupted(task["id"]))
-        if self.interrupted(task["id"]):
+        if self.store.get(task['id'])['state'] != 'running':
             raise Interrupted()
         validate_result(result)
         atomic_json(folder / f"{stage}-{attempts[stage]:02}.json", result)
@@ -368,6 +414,8 @@ class Runner:
         self.persist(task, "stage_finished", {"stage": stage, "next": task["stage"]})
 
     def report(self, task):
+        from .baseline import verify
+        verify(self.store, task)
         data = task["data"]
         workspace = Path(data["workspace"])
         for directory, dirs, files in os.walk(workspace, followlinks=False):
@@ -393,7 +441,10 @@ class Runner:
                 raise RuntimeError(f"Изменение вне плана: {name}")
             if path is None and (workspace / name).is_symlink():
                 raise RuntimeError(f"Файл заменён ссылкой: {name}")
-            old = git(self.store.root, "show", f"{data['base']}:{name}") if old_info else b""
+            if old_info and data.get('input_baseline'):
+                old = (self.store.folder(task['id']) / 'input-baseline' / name).read_bytes()
+            else:
+                old = git(self.store.root, "show", f"{data['base']}:{name}") if old_info else b""
             try:
                 for line in difflib.unified_diff(old.decode().splitlines(True), new.decode().splitlines(True),
                     fromfile="a/" + name if old_info else "/dev/null", tofile="b/" + name if path else "/dev/null"):

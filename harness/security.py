@@ -27,7 +27,7 @@ def safe_env():
     allowed = {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "SYSTEMROOT"}
     env = {k: v for k, v in os.environ.items() if k in allowed}
     env.update({"PYTHONDONTWRITEBYTECODE": "1", "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"})
+                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0", "OPENSSL_CONF": os.devnull})
     return env
 
 
