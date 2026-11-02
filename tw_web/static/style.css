@@ -1,0 +1,33 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #263c35; background: #f5f6f2; }
+* { box-sizing: border-box; }
+body { margin: 0; display: flex; min-height: 100vh; }
+aside { width: 246px; flex-shrink: 0; background: #193d33; color: #c5d8ce; padding: 34px 24px; display: flex; flex-direction: column; }
+.brand { color: #fff; font-size: 30px; font-weight: 750; letter-spacing: -1.5px; text-decoration: none; margin-bottom: 66px; }
+.brand span { color: #9ac6a8; font-weight: 400; margin-left: 5px; }
+.eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 1.7px; line-height: 1.6; }
+aside .eyebrow { color: #8db1a0; }
+.project { padding: 16px 12px; border: 1px solid #496357; border-radius: 8px; color: #fff; }
+.project small { display: block; color: #9eb8a9; margin: 7px 0 0 18px; font-size: 11px; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #91bc91; margin-right: 7px; }
+.aside-note { margin-top: auto; font-size: 11px; line-height: 1.8; padding-top: 90px; }
+main { max-width: 1450px; padding: 0 52px; flex: 1; min-width: 0; }
+header { height: 88px; border-bottom: 1px solid #dfe4dc; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.local { color: #657c6d; font-size: 11px; }
+.heading { margin: 54px 0 32px; }
+.heading .eyebrow { color: #748a78; }
+h1 { font-size: clamp(28px, 3vw, 42px); font-weight: 550; letter-spacing: -1.6px; margin: 13px 0; }
+.heading > p:last-child { color: #77857b; font-size: 14px; }
+.notice { background: #e7eddf; border: 1px solid #d8e1ce; border-radius: 12px; padding: 26px; display: flex; gap: 20px; align-items: flex-start; }
+.step { background: #d7e2c8; padding: 12px; border-radius: 8px; font-size: 14px; color: #557047; }
+h2 { font-size: 18px; font-weight: 600; margin: 2px 0 12px; letter-spacing: -.3px; }
+.notice p, article > p { font-size: 13px; color: #70806e; line-height: 1.8; margin: 0; max-width: 590px; }
+.badge { border: 1px solid #becdaf; border-radius: 20px; padding: 6px 11px; font-size: 10px; white-space: nowrap; margin-left: auto; }
+.columns { display: grid; grid-template-columns: 1.2fr 1fr; gap: 22px; margin-top: 26px; }
+article { border: 1px solid #e0e5da; border-radius: 12px; padding: 26px; background: #fffefa; }
+article .eyebrow { margin-bottom: 23px; color: #7e8f7d; font-size: 10px; }
+.empty { margin-top: 26px; padding: 22px 12px; border: 1px dashed #d7dfcf; border-radius: 7px; text-align: center; font-size: 12px; color: #8a9587; }
+ol { padding-left: 20px; color: #72806f; font-size: 13px; line-height: 2.5; }
+li::marker { color: #8fa77d; }
+footer { border-top: 1px solid #dfe4dc; margin: 44px 0 25px; padding-top: 20px; font-size: 10px; color: #8c9788; display: flex; justify-content: space-between; gap: 12px; }
+@media (max-width: 950px) { aside { width: 190px; padding: 30px 18px; } main { padding: 0 26px; } .columns { grid-template-columns: 1fr; } .badge { display: none; } }
+@media (max-width: 600px) { body { display: block; } aside { width: 100%; padding: 15px 22px; flex-direction: row; align-items: center; justify-content: space-between; } .brand { margin: 0; font-size: 25px; } aside .eyebrow, .aside-note, .project small { display: none; } .project { padding: 9px; font-size: 12px; border: 0; } main { padding: 0 20px; } header { height: 64px; } .heading { margin-top: 35px; } .notice, article { padding: 20px; } .step { display: none; } footer { flex-direction: column; } }
