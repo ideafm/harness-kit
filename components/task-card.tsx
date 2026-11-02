@@ -1,0 +1,6 @@
+import type { Task,Control,Transport,Session } from '@/lib/contracts'
+import { Badge } from '@/components/ui/badge'
+import { TaskActions } from './task-actions'
+import { TaskProgress } from './task-progress'
+import { label,date,taskStateLabel } from '@/lib/task-presentation'
+export function TaskCard({task,control,transport,session,onRefresh}:{task:Task;control?:Control;transport:Transport;session?:Session;onRefresh:()=>void}){return <section className="task-card"><div className="section-heading"><span className="eyebrow">ЗАДАЧА #{task.id}</span><Badge variant="secondary">{taskStateLabel(task)}</Badge></div><h2>{task.request.split('\n')[0]||'Без названия'}</h2>{(task.reason||task.question)&&<div className="notice"><strong>Ожидается решение</strong><p>{task.reason}</p><p>{task.question}</p></div>}<TaskProgress task={task}/><div className="stage-line"><span>Этап: <strong>{label(task.stage)}</strong></span><span className="muted">Обновлено {date(task.updated)}</span></div>{control?<TaskActions key={task.id} control={control} transport={transport} session={session} onRefresh={onRefresh}/>:<p className="muted">Управление недоступно до получения актуальных полномочий контроллера.</p>}<details><summary>Исходный запрос</summary><pre className="request">{task.request}</pre></details></section>}
