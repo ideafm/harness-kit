@@ -5,6 +5,32 @@ import type { Control,Transport } from '@/lib/contracts'
 import { ApiError } from '@/lib/http-transport'
 const control:Control={task:{id:1,state:'needs_input',stage:'planning',request:'Запрос',updated:1,artifacts:[]},revision:'r1',allowed_actions:['answer','approve_plan','revise_plan','accept_result','request_changes','reject_result'],pending_question_id:'q1',plan:{version:2,digest:'digest'},result:null,confirmation_urls:{approve_plan:'http://127.0.0.1:47832/confirm?id=1'}}
 const session={csrf_token:'csrf',confirmation_origin:'http://127.0.0.1:47832'}
+it('показывает три решения только через trusted widgets',()=>{
+ const actions=['accept_result','request_changes','reject_result']
+ const post=vi.fn()
+ const props={control:{...control,allowed_actions:actions,confirmation_widgets:Object.fromEntries(actions.map(action=>[action,session.confirmation_origin+'/confirm/embed?action='+action]))},session,transport:{projectId:'a',get:vi.fn(),post},onRefresh:vi.fn()}
+ const view=render(<TaskActions {...props}/>)
+ for(const title of ['Принять','Доработать','Отклонить'])expect(screen.getByTitle(title)).toBeTruthy()
+ expect(post).not.toHaveBeenCalled()
+ view.rerender(<TaskActions {...props} control={{...props.control,allowed_actions:[]}}/>)
+ expect(view.container.querySelector('iframe')).toBeNull()
+})
+it.each(['csrf','project','url'])('блокирует решения без %s',missing=>{
+ render(<TaskActions control={{...control,allowed_actions:['accept_result'],confirmation_widgets:{accept_result:missing==='url'?'https://example.com/confirm/embed':session.confirmation_origin+'/confirm/embed'}}} session={missing==='csrf'?{confirmation_origin:session.confirmation_origin}:session} transport={{projectId:missing==='project'?undefined:'a',get:vi.fn(),post:vi.fn()}} onRefresh={vi.fn()}/> )
+ expect(screen.queryByTitle('Принять')).toBeNull()
+})
+it('блокирует trusted решения во время команды и при сохранённом pending',async()=>{
+ const props={control:{...control,allowed_actions:['start','accept_result'],confirmation_widgets:{accept_result:session.confirmation_origin+'/confirm/embed'}},session,transport:{projectId:'a',get:vi.fn(),post:vi.fn().mockRejectedValue(new TypeError('Неизвестный результат'))},onRefresh:vi.fn()}
+ const view=render(<TaskActions {...props}/>)
+ expect(screen.getByTitle('Принять')).toBeTruthy()
+ fireEvent.click(screen.getByText('Запустить'))
+ expect(screen.queryByTitle('Принять')).toBeNull()
+ await screen.findByText('Неизвестный результат')
+ expect(screen.queryByTitle('Принять')).toBeNull()
+ view.unmount()
+ render(<TaskActions {...props}/>)
+ expect(screen.queryByTitle('Принять')).toBeNull()
+})
 it('повторяет неопределённый POST с исходными телом, ключом и revision после polling',async()=>{
  const post=vi.fn().mockRejectedValueOnce(new TypeError('Сеть недоступна')).mockResolvedValue({operation_id:'op',status:'pending',task_id:1})
  const get=vi.fn().mockResolvedValue({status:'succeeded'});const transport={get,post} as Transport
