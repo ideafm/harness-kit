@@ -1,0 +1,27 @@
+'use client'
+import { useEffect,useState,type CSSProperties } from 'react'
+import type { Task,Transport } from '@/lib/contracts'
+import { TaskProgress } from './task-progress'
+import { httpTransport } from '@/lib/http-transport'
+import { useTaskData } from '@/hooks/use-task-data'
+import { SidebarProvider,SidebarInset,SidebarTrigger } from '@/components/ui/sidebar'
+import { Skeleton } from '@/components/ui/skeleton'
+import { ProjectSidebar } from './project-sidebar'
+import { TaskCard } from './task-card'
+import { CreateTaskSheet } from './create-task-sheet'
+import { WorkerPanel } from './worker-panel'
+import { Button } from './ui/button'
+import { taskStateLabel } from '@/lib/task-presentation'
+export function TaskPanel({transport=httpTransport}:{transport?:Transport}){
+ const data=useTaskData(transport);const tasks=data.status?.tasks||[];const task=data.control?.task||tasks.find(t=>t.id===data.selected);const projectName=data.projects?.items.find(p=>p.id===data.projectId)?.name||'Проект не выбран'
+ const [search,setSearch]=useState('');const [filter,setFilter]=useState('all');const [page,setPage]=useState(0);const [mobileCard,setMobileCard]=useState(false)
+ useEffect(()=>{setSearch('');setFilter('all');setPage(0);setMobileCard(false)},[data.projectId])
+ useEffect(()=>{if(mobileCard&&task&&window.innerWidth<768)document.querySelector<HTMLElement>('.task-card')?.focus()},[mobileCard,task?.id])
+ const filtered=tasks.filter(t=>(filter==='all'||(filter==='backlog'?t.state==='backlog':Boolean(t.question)||['needs_permission','needs_input','awaiting_approval'].includes(t.state)||(t.state==='review'&&t.stage==='done')))&&(`#${t.id} ${t.request.split('\n')[0]}`).toLocaleLowerCase('ru').includes(search.toLocaleLowerCase('ru')))
+ const pages=Math.max(1,Math.ceil(filtered.length/4));const current=Math.min(page,pages-1)
+ const select=(id:number)=>{data.select(id);setMobileCard(true)}
+ return <SidebarProvider style={{'--sidebar-width':'12rem'} as CSSProperties}><ProjectSidebar projects={data.projects} selected={data.projectId} onSelect={data.selectProject} project={projectName} count={tasks.length} running={data.status?.worker.running??false}/><SidebarInset className="min-w-0"><header className="topbar"><div className="flex items-center gap-2"><SidebarTrigger aria-label="Открыть меню проектов"/><strong>{projectName}</strong></div><div className="top-actions"><WorkerPanel key={`${data.projectId}:${task?.id}:${data.status?.worker.task_id}`} status={data.status} selectedTask={task} project={projectName} onSelect={select}/><CreateTaskSheet key={data.projectId} transport={data.transport} session={data.session} enabled={Boolean(data.capabilities?.actions.some(a=>a==='create'||a==='create_task'))} onCreated={select}/></div></header><div className="workspace"><div className="task-toolbar"><h1>Задачи <span className="muted">· {tasks.length}</span></h1><div className="filters" aria-label="Фильтры задач">{[['all','Все'],['attention','Нужно вам'],['backlog','Бэклог']].map(([value,title])=><button key={value} aria-pressed={filter===value} onClick={()=>{setFilter(value);setPage(0)}}>{title}</button>)}</div><input aria-label="Поиск задач" placeholder="Найти задачу…" value={search} onChange={event=>{setSearch(event.target.value);setPage(0)}}/><Button variant="ghost" onClick={()=>void data.refresh()}>Обновить</Button></div>{data.error&&<div role="alert" className="notice error">{data.error}. Последние полученные данные могут быть устаревшими.</div>}{data.loading&&!data.status?<Skeleton aria-label="Загрузка задач" className="h-72 w-full"/>:<div className={`work-grid ${mobileCard&&task?'show-card':''}`}><section className="panel queue" aria-label="Задачи проекта"><div className="section-heading"><h2>Задачи проекта</h2><span className="muted">{filtered.length}</span></div>{filtered.length?<TaskTable tasks={filtered.slice(current*4,current*4+4)} selected={data.selected} onSelect={select}/>:<p className="empty">{tasks.length?'Нет результатов поиска.':'Задач пока нет.'}</p>}<nav className="pagination" aria-label="Страницы задач"><button disabled={current===0} onClick={()=>setPage(current-1)}>Назад</button><span>{current+1} / {pages}</span><button disabled={current===pages-1} onClick={()=>setPage(current+1)}>Далее</button></nav></section><div className="card-column">{task?<><button className="mobile-back detail-button" onClick={()=>{setMobileCard(false);requestAnimationFrame(()=>document.querySelector<HTMLButtonElement>('.task-select[aria-pressed=true]')?.focus())}}>Назад к задачам</button><TaskCard key={data.projectId} task={task} control={data.control} transport={data.transport} session={data.session} events={data.capabilities?.events??false} onRefresh={()=>void data.refresh()}/></>:<section className="panel empty">Выберите задачу в списке.</section>}</div></div>}</div></SidebarInset></SidebarProvider>
+}
+export function TaskTable({tasks,selected,onSelect}:{tasks:Task[];selected?:number;onSelect:(id:number)=>void}){
+ return <div className="task-rows">{tasks.map(t=><div className={selected===t.id?'task-row selected':'task-row'} key={t.id}><button className="task-select" aria-label={`#${t.id} ${t.request.split('\n')[0]||'Без названия'}`} aria-pressed={selected===t.id} onClick={()=>onSelect(t.id)}><span className="eyebrow">#{t.id}</span><strong>{t.request.split('\n')[0]||'Без названия'}</strong><span className="muted">{taskStateLabel(t)}</span></button><TaskProgress task={t} compact/></div>)}</div>
+}

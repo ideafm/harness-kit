@@ -1,0 +1,3 @@
+import type { Task } from '@/lib/contracts'
+import { Button } from '@/components/ui/button'
+export function DecisionList({tasks,onSelect}:{tasks:Task[];onSelect:(id:number)=>void}){const pending=tasks.filter(t=>t.state.startsWith('needs_')||t.state==='awaiting_approval'||t.state==='review'||(t.state==='waiting'&&Boolean(t.question?.trim())));return <section className="decision"><div className="section-heading"><h2>Требует решения</h2><span>{pending.length}</span></div>{pending.length?pending.map(t=><Button key={t.id} variant="outline" onClick={()=>onSelect(t.id)} className="max-w-full truncate">#{t.id} · {t.reason||t.question||'Ожидается решение'}</Button>):<p className="muted">Сейчас нет задач, ожидающих вашего решения.</p>}</section>}
