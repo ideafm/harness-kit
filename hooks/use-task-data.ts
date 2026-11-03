@@ -26,12 +26,12 @@ export function useTaskData(base:Transport) {
   try{
    const [next,caps,sess]=await Promise.all([transport.get<Status>('status',signal),transport.get<Capabilities>('capabilities',signal),transport.get<Session>('session',signal)])
    if(version!==current.current||signal?.aborted)return
-   if(!Array.isArray(next.tasks)||!next.worker||typeof next.worker.running!=='boolean'||next.tasks.some(t=>!Number.isSafeInteger(t.id)||t.id<=0||typeof t.request!=='string')||(caps.project_id!==undefined&&caps.project_id!==projectId)||!Array.isArray(caps.actions)||typeof caps.events!=='boolean'||typeof sess.csrf_token!=='string')throw Error('Некорректные данные контроллера')
+   if(!Array.isArray(next.tasks)||!next.worker||typeof next.worker.running!=='boolean'||next.tasks.some(t=>!Number.isSafeInteger(t.id)||t.id<=0||typeof t.request!=='string')||(caps.project_id!==undefined&&caps.project_id!==projectId)||!Array.isArray(caps.actions)||typeof caps.events!=='boolean'||(sess.csrf_token!==undefined&&typeof sess.csrf_token!=='string'))throw Error('Некорректные данные контроллера')
    const wanted=choice.task;const found=wanted?next.tasks.find(t=>t.id===wanted):undefined
    const ctrl=found?await transport.get<Control>(`tasks/${found.id}/control`,signal):undefined
    if(ctrl&&(!Array.isArray(ctrl.allowed_actions)||typeof ctrl.revision!=='string'||ctrl.task.id!==wanted))throw Error('Некорректные данные управления')
    if(version!==current.current||signal?.aborted)return
-   setLoadedProject(projectId);setStatus(next);setSelected(found?.id);setControl(ctrl);setCapabilities(caps);setSession(sess);setError(choice.invalidTask||wanted&&!found?'Неизвестная задача в выбранном проекте':'')
+   setLoadedProject(projectId);setStatus(next);setSelected(found?.id);setControl(ctrl);setCapabilities(caps);setSession(sess.csrf_token?sess:undefined);setError(choice.invalidTask||wanted&&!found?'Неизвестная задача в выбранном проекте':'')
   }catch(e){if(version===current.current&&!signal?.aborted){setError(e instanceof Error?e.message:'Ошибка соединения');setControl(undefined);setCapabilities(undefined);setSession(undefined)}}finally{if(version===current.current)setLoading(false)}
  },[transport,projectId,valid,choice])
  useEffect(()=>{const abort=new AbortController();let timer:ReturnType<typeof setTimeout>;let stopped=false;async function poll(){await refresh(abort.signal);if(!stopped)timer=setTimeout(poll,5000)}void poll();return()=>{stopped=true;abort.abort();current.current++;clearTimeout(timer)}},[refresh])

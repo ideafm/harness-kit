@@ -3,7 +3,8 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
-import { PanelLeftIcon } from "lucide-react"
+import { AppIcon } from "@/components/app-icon"
+const MenuIcon = (props: React.ComponentProps<typeof AppIcon>) => <AppIcon name="menu" {...props}/>
 import { Slot } from "radix-ui"
 
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -272,7 +273,7 @@ function SidebarTrigger({
       }}
       {...props}
     >
-      <PanelLeftIcon />
+      <MenuIcon />
       <span className="sr-only">Открыть меню проектов</span>
     </Button>
   )

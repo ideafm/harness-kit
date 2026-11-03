@@ -19,3 +19,11 @@ approve_plan, revise_plan, accept_result, request_changes, reject_result не о
 GET tasks/{id}/events?after=0&limit=100 → {items,next_cursor,has_more}. Items содержат id,cursor,task_id,revision,type,occurred_at,message. Клиент последовательно получает страницы, удаляет дубликаты по id и продолжает polling. При ошибке сохраняет историю; ручное перечитывание сбрасывает cursor. 410 cursor_expired сбрасывает cursor и запускает повторное чтение истории; snapshot независимо обновляется общим polling.
 
 400 — параметры, 403 — полномочия/CSRF, 404 — ресурс, 409 — конфликт, 422 — переход, 503 — недоступность. Отказ отображается явно. Приёмка, интеграция diff и разрешение доступа различаются; обычный ответ не создаёт grant. Preview не запускается, применение недоступно.
+
+## TASK-004: встроенные решения и чтение
+
+Актуальная UI-интеграция использует confirmation_widgets вместо confirmation_urls для HIGH_ACTIONS. Точный origin session.confirmation_origin и путь /confirm/embed, http loopback без credentials/fragment обязательны. Iframe имеет sandbox allow-forms allow-scripts allow-same-origin. Подтверждение и авторизация остаются в контроллере. Сообщения tw:decision проверяют origin/source/task/project/action/status и инициируют refresh, без локальной приёмки. tw:widget-size ограничивается конечными 40..420 px. Старые формы демонтируются при смене контекста.
+
+Сессия без csrf разрешает чтение, но не команды и не widgets. Preview берётся только из task.preview.url. Worker использует task_id и observation {task_id,terminal_command,mode:events,interactive:false}; команда копируется неизменённой и никогда не исполняется frontend. Нет observation — нет придуманной команды. Данные другого проекта не используются.
+
+B-002 и отдельные backend-контракты нужны для scheduler/зависимостей, структурированных причин, рекомендаций, событий процесса и сообщений агенту. История задачи не выдаётся за историю worker. Проверка не означает приёмку; приёмка не означает применение.

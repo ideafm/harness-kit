@@ -21,11 +21,11 @@ it.each(['awaiting_approval','needs_input','needs_permission','rate_limited','pa
 it('возвращает индикатор check → implement → check без накопленного прогресса',()=>{
  const task={id:1,state:'running',stage:'check',updated:1,request:'Запрос',artifacts:[]}
  const view=render(<TaskProgress task={task}/>)
- expect(screen.getByText('Проверки').getAttribute('aria-current')).toBe('step')
+ expect(screen.getByLabelText(/Проверки/).closest('li')?.getAttribute('aria-current')).toBe('step')
  view.rerender(<TaskProgress task={{...task,stage:'implement'}}/>)
- expect(screen.getByText('Реализация').getAttribute('aria-current')).toBe('step')
- expect(screen.getByText('Проверки').getAttribute('aria-current')).toBeNull()
+ expect(screen.getByLabelText(/Реализация/).closest('li')?.getAttribute('aria-current')).toBe('step')
+ expect(screen.getByLabelText(/Проверки/).closest('li')?.getAttribute('aria-current')).toBeNull()
  view.rerender(<TaskProgress task={task}/>)
- expect(screen.getByText('Проверки').getAttribute('aria-current')).toBe('step')
+ expect(screen.getByLabelText(/Проверки/).closest('li')?.getAttribute('aria-current')).toBe('step')
  expect(screen.getAllByRole('listitem')).toHaveLength(5)
 })
