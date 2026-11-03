@@ -8,7 +8,7 @@ const control:Control={task:{id:1,state:'review',stage:'done',updated:1,request:
 it('проверяет origin, source и весь контекст, только запрашивая реальные данные',()=>{
  const refresh=vi.fn();const props={control,session,project:'a',action:'accept_result',onRefresh:refresh}
  const view=render(<TrustedDecisionWidget {...props}/>)
- const frame=screen.getByTitle('Принять результат') as HTMLIFrameElement
+ const frame=screen.getByTitle('Принять') as HTMLIFrameElement
  const decision={type:'tw:decision',task:1,project:'a',action:'accept_result',status:'succeeded'}
  const send=(data:unknown,source:MessageEventSource|null=frame.contentWindow,eventOrigin=origin)=>act(()=>window.dispatchEvent(new MessageEvent('message',{data,source,origin:eventOrigin})))
  send(decision,null);send(decision,frame.contentWindow,'http://localhost:47832')
@@ -22,13 +22,13 @@ it('проверяет origin, source и весь контекст, только
  view.rerender(<TrustedDecisionWidget {...props} control={{...control,revision:'r2'}}/>)
  send(decision,source);expect(refresh).toHaveBeenCalledTimes(1)
  view.rerender(<TrustedDecisionWidget {...props} control={{...control,allowed_actions:[]}}/>)
- expect(screen.queryByTitle('Принять результат')).toBeNull()
+ expect(screen.queryByTitle('Принять')).toBeNull()
  send(decision,source);expect(refresh).toHaveBeenCalledTimes(1)
 })
 it('не восстанавливает widgets в preview и не использует старую страницу',()=>{
  const view=render(<TrustedDecisionWidget control={control} session={{confirmation_origin:origin}} project="a" action="accept_result" onRefresh={vi.fn()}/>)
- expect(screen.queryByTitle('Принять результат')).toBeNull()
+ expect(screen.queryByTitle('Принять')).toBeNull()
  view.rerender(<TrustedDecisionWidget control={{...control,confirmation_widgets:undefined,confirmation_urls:{accept_result:origin+'/confirm'}}} session={session} project="a" action="accept_result" onRefresh={vi.fn()}/>)
  expect(screen.queryByRole('link')).toBeNull()
- expect(screen.queryByTitle('Принять результат')).toBeNull()
+ expect(screen.queryByTitle('Принять')).toBeNull()
 })
