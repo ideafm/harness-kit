@@ -143,6 +143,22 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.app.dispatch('GET', '/', self.headers)[0], 503)
         self.assertEqual(self.app.dispatch('GET', '/../app.py', self.headers)[0], 404)
 
+    def test_operator_page_adopts_new_verified_deployment_and_listens_for_acceptance(self):
+        self.app.track_deployment = True
+        assets = self.root / 'next-export'
+        assets.mkdir()
+        data = b'<html>accepted-new-build</html>'
+        (assets / 'index.html').write_bytes(data)
+        receipt = self.root / '.harness/next-receipt.json'
+        receipt.write_text(json.dumps({'assets': {'index.html': hashlib.sha256(data).hexdigest()}}))
+        deployment = self.root / '.harness/web-ui.json'
+        deployment.write_text(json.dumps({'export': str(assets), 'receipt': str(receipt)}))
+        status, _, body = self.app.dispatch('GET', '/', self.headers)
+        self.assertEqual(status, 200)
+        self.assertIn(b'accepted-new-build', body)
+        self.assertIn(b'accept_result', body)
+        self.assertIn(b'location.reload()', body)
+
     def test_foreign_origin_and_missing_csrf_are_denied(self):
         self.assertEqual(self.app.dispatch('GET', '/', {'Host': 'evil.example'})[0], 403)
         headers = dict(self.headers, **{'Origin': 'https://evil.example'})

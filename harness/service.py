@@ -34,18 +34,35 @@ class TaskService:
 
     def view(self, task):
         data = task["data"]
+        from .observation import descriptor
         result = {k: task[k] for k in ("id", "state", "stage", "updated")}
+        result['observation'] = descriptor(self.root, task['id'])
         for key in ("request", "question", "question_kind", "reason", "retry_at", "implementation_summary", "review_verdict",
-                    "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason"):
+                    "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error"):
             if key in data:
                 result[key] = data[key]
+        if task['state'] != 'rate_limited':
+            result.pop('retry_at', None)
+        if task['state'] in {'running', 'queued', 'review', 'accepted'}:
+            result.pop('reason', None)
         result["artifacts"] = [name for name, filename in ARTIFACTS.items()
                                if (self.store.folder(task["id"]) / filename).is_file()]
+        preview_home = self.store.folder(task['id']) / 'live-preview'
+        preview_record = preview_home / 'server.json'
+        if task['state'] != 'rejected' and not preview_home.is_symlink() and not preview_record.is_symlink() and preview_record.is_file():
+            preview = json.loads(preview_record.read_text())
+            port = preview.get('port')
+            if type(port) is int and 1024 <= port <= 65535 and preview.get('task') == task['id']:
+                result['preview'] = {'url': f'http://127.0.0.1:{port}', 'read_only': True}
         return result
 
     def status(self):
-        return {"project": str(self.root), "tasks": [self.view(t) for t in self.store.tasks()],
-                "worker": self.worker_status()}
+        tasks = [self.view(t) for t in self.store.tasks()]
+        worker = self.worker_status()
+        active = next((task for task in tasks if task['state'] == 'running'), None)
+        worker['task_id'] = active['id'] if active and worker['running'] else None
+        worker['observation'] = active['observation'] if active and worker['running'] else None
+        return {"project": str(self.root), "tasks": tasks, "worker": worker}
 
     def show(self, ident):
         return self.view(self.store.get(ident))

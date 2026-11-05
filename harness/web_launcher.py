@@ -118,7 +118,7 @@ class Runtime:
         with self.lock('server.lock'):
             deployment = self.deployment()
             instance = secrets.token_hex(32)
-            app = WebApplication(self.root, instance, deployment['export'], deployment['receipt'])
+            app = WebApplication(self.root, instance, deployment['export'], deployment['receipt'], track_deployment=True)
             first, second = servers(app)
             thread = threading.Thread(target=second.serve_forever, daemon=True)
             thread.start()

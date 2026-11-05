@@ -84,6 +84,15 @@ class HarnessTests(unittest.TestCase):
             main(["--project", str(self.root), *args])
         return output.getvalue()
 
+    def test_project_frontend_runtime_is_inherited_by_new_tasks(self):
+        config_path = self.store.home / 'config.json'
+        config = json.loads(config_path.read_text())
+        config['frontend_toolchain'] = 'next-ui'
+        atomic_json(config_path, config)
+        task, _ = self.run_task()
+        self.assertEqual(task['data']['frontend_toolchain'], 'next-ui')
+        self.assertIn('runtime_prepared', [event['kind'] for event in self.store.events(1)])
+
     def test_complete_pipeline_publishes_before_execution(self):
         backend = FakeCodex()
         def implementation():
@@ -348,6 +357,8 @@ class HarnessTests(unittest.TestCase):
         task, _ = self.run_task(backend)
         self.assertEqual(task["state"], "review")
         self.assertEqual(backend.calls.count("plan"), 1)
+        self.assertNotIn('reason', task['data'])
+        self.assertNotIn('retry_at', task['data'])
 
     def test_pause_during_stage_is_not_overwritten(self):
         def pause():

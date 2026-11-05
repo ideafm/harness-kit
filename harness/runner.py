@@ -200,6 +200,8 @@ class Runner:
                 if self.store.get(ident)["state"] == "paused":
                     return
                 previous_state = task["state"]
+                task['data'].pop('retry_at', None)
+                task['data'].pop('reason', None)
                 task["state"] = "running"
                 self.store.save(task, "started", {"stage": task["stage"]}, expected=previous_state)
                 self.prepare(task)
@@ -247,6 +249,9 @@ class Runner:
     def prepare(self, task):
         data = task["data"]
         folder = self.store.folder(task["id"])
+        if self.config.get('frontend_toolchain') == 'next-ui' and not data.get('frontend_toolchain'):
+            data['frontend_toolchain'] = 'next-ui'
+            self.persist(task, 'runtime_prepared', {'frontend_toolchain': 'next-ui'})
         if (folder / 'baseline-preparing.json').exists():
             raise RuntimeError('Незавершённая подготовка основы; выполнение запрещено')
         from .baseline import verify
@@ -263,11 +268,14 @@ class Runner:
         if not workspace.is_dir() or workspace.is_symlink():
             raise RuntimeError("Рабочая копия потеряна или заменена ссылкой")
         data["workspace"] = str(workspace)
+        if self.config.get('task_worktrees'):
+            from .git_results import prepare_worktree
+            prepare_worktree(self.store, task)
 
     def prompt(self, task):
         data = task["data"]
         context = {k: data.get(k) for k in ("request", "answers", "specification", "plan", "criteria", "files", "feedback",
-                                          "approval_mode", "effective_approval", "plan_feedback", "runtime_context", "technical_resolutions")}
+                                          "approval_mode", "effective_approval", "plan_feedback", "runtime_context", "technical_resolutions", "design_reference")}
         context["controller_check"] = self.config["check"]
         context['controller_stage'] = task['stage']
         if task['stage'] in {'implement', 'review'} and data.get('plan_approval'):

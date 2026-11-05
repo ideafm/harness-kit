@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
 from functools import lru_cache
 import urllib.parse
 import urllib.request
@@ -193,9 +194,8 @@ def source_digest(workspace):
     return hashlib.sha256(json.dumps({name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in regular_files(workspace)}, sort_keys=True).encode()).hexdigest()
 
 
-def check(workspace, folder, config, interrupted=lambda: False):
-    from .runner import execute
-    root = folder.parents[2]
+def check(workspace, folder, config, interrupted=lambda: False, project_root=None):
+    root = Path(project_root) if project_root is not None else folder.parents[2]
     home = root / '.harness/toolchains/next-ui'
     toolchain = json.loads((home / 'toolchain.json').read_text())
     runtime = Path(toolchain['prepared_node'])
@@ -211,8 +211,13 @@ def check(workspace, folder, config, interrupted=lambda: False):
             raise RuntimeError('Dependencies changed; a new prepared toolchain is required')
     doctor(config, home, dependencies)
     before = source_digest(workspace)
-    scratch = folder / f'frontend-check-{time.time_ns()}'
-    scratch.mkdir()
+    with tempfile.TemporaryDirectory(prefix='tw-frontend-') as temporary:
+        return check_snapshot(workspace, folder, config, interrupted, toolchain, runtime,
+                              dependencies, before, Path(temporary).resolve())
+
+
+def check_snapshot(workspace, folder, config, interrupted, toolchain, runtime, dependencies, before, scratch):
+    from .runner import execute
     for name, path in regular_files(workspace):
         target = scratch / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +254,8 @@ def check(workspace, folder, config, interrupted=lambda: False):
     if len(exports) != 1:
         raise RuntimeError('Expected exactly one static frontend export')
     export = exports[0]
+    if export.is_symlink():
+        raise RuntimeError('Symlink in frontend export')
     assets = {}
     for directory, dirs, files in os.walk(export, followlinks=False):
         if any((Path(directory) / name).is_symlink() for name in dirs + files):
@@ -256,6 +263,14 @@ def check(workspace, folder, config, interrupted=lambda: False):
         for name in files:
             path = Path(directory) / name
             assets[str(path.relative_to(export))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    published = folder / f'frontend-export-{time.time_ns()}'
+    published.mkdir()
+    for name, digest in assets.items():
+        target = published / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(export / name, target)
+        if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+            raise RuntimeError('Frontend export changed during publication')
     atomic_json(folder / 'frontend-receipt.json', {'source_digest': before, 'toolchain': toolchain,
-        'checks': results, 'export': str(export), 'assets': assets})
+        'checks': results, 'export': str(published), 'assets': assets})
     return 0

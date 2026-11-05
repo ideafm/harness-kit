@@ -3,7 +3,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .security import protected, regular_files
+from .security import protected, regular_files, export_snapshot, git
 from .state import atomic_json
 
 
@@ -53,6 +53,12 @@ def prepare(store, ident, source_ident):
         source_manifest = manifest(source_workspace)
         folder = store.folder(ident)
         workspace = folder / 'workspace'
+        if 'manifest' not in target['data']:
+            if workspace.exists() or workspace.is_symlink():
+                raise ValueError('Незавершённый экспорт целевой копии')
+            target['data']['base'] = git(store.root, 'rev-parse', 'HEAD').decode().strip()
+            target['data']['manifest'] = export_snapshot(store.root, workspace, target['data']['base'])
+            target['data']['workspace'] = str(workspace)
         if manifest(workspace) != target['data']['manifest']:
             raise ValueError('В целевой копии уже есть изменения')
         for name in ('input-baseline', 'workspace-before-baseline', 'baseline-staging', 'baseline-preparing.json'):
@@ -74,6 +80,8 @@ def prepare(store, ident, source_ident):
         workspace.rename(folder / 'workspace-before-baseline')
         (folder / 'baseline-staging').rename(workspace)
         target['data']['manifest'] = source_manifest
+        if source['data'].get('git_result'):
+            target['data']['base'] = source['data']['git_result']['commit']
         target['data']['input_baseline'] = {'source_task': source_ident, 'manifest': source_manifest,
             'source_check_receipt': receipt, 'source_state': source['state']}
         target['data']['attempts']['plan'] = 0

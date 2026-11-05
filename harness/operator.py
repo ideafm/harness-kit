@@ -64,7 +64,7 @@ class Operator:
     def capabilities(self):
         return {'project_id': digest(str(self.service.root))[:16], 'operator_api_version': '1',
                 'actions': sorted(ACTIONS | {'submit', 'create_task'}), 'events': True, 'apply': False,
-                'human_confirmation': 'separate-origin'}
+                'human_confirmation': 'separate-origin', 'embedded_confirmation': True}
 
     def events(self, ident, after=0, limit=100):
         self.store.get(ident)

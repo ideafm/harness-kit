@@ -34,6 +34,16 @@ def parser():
     baseline.add_argument('--from-task', required=True, type=task_id)
     retry_review = sub.add_parser('retry-review', help='Повторить ревью проверенного неизменённого результата')
     retry_review.add_argument('task', type=task_id)
+    commit_result = sub.add_parser('commit-result', help='Коммит принятого результата в ветку задачи')
+    commit_result.add_argument('task', type=task_id)
+    apply_result = sub.add_parser('apply-result', help='Слить принятый результат и активировать сборку')
+    apply_result.add_argument('task', type=task_id)
+    preview = sub.add_parser('preview', help='Live-preview задачи до приёмки на отдельном локальном адресе')
+    preview.add_argument('task', type=task_id)
+    preview.add_argument('--serve', action='store_true', help=argparse.SUPPRESS)
+    watch = sub.add_parser('watch', help='Наблюдать за этапами задачи в терминале')
+    watch.add_argument('task', type=task_id)
+    watch.add_argument('--once', action='store_true')
     for action in ("run", "show", "pause", "resume", "accept"):
         child = sub.add_parser(action)
         child.add_argument("task", type=task_id)
@@ -109,7 +119,9 @@ def init(args):
     check[0] = str(Path(executable).resolve())
     home.mkdir(mode=0o700)
     atomic_json(home / "config.json", {"version": 1, "codex": codex, "model": args.model,
-                "check": check, "timeout": args.timeout, "max_attempts": 3})
+                "check": check, "timeout": args.timeout, "max_attempts": 3,
+                'commit_after_accept': True, 'task_worktrees': True, 'apply_after_accept': True,
+                'integration_branch': git(root, 'symbolic-ref', '--short', 'HEAD').decode().strip()})
     store = Store(root)
     store.db.close()
     print(f"Инициализировано: {home}\nПроверки: {check}\nПеред исполнением всегда запускается canary-проверка sandbox.")
@@ -143,6 +155,23 @@ def dispatch_store(args, store):
     elif action == "doctor":
         config = json.loads((store.home / "config.json").read_text())
         print(doctor(config["codex"]))
+    elif action == 'watch':
+        from .service import TaskService
+        from .observation import watch
+        service = TaskService(store.root)
+        try:
+            watch(service, args.task, args.once)
+        finally:
+            service.close()
+    elif action == 'preview':
+        from .preview import main as preview_main
+        preview_main(store.root, args.task, args.serve)
+    elif action == 'apply-result':
+        from .integration import apply_accepted
+        print(json.dumps(apply_accepted(store, args.task), ensure_ascii=False))
+    elif action == 'commit-result':
+        from .git_results import commit_accepted
+        print(json.dumps(commit_accepted(store, args.task), ensure_ascii=False))
     elif action == 'retry-review':
         from .recovery import retry_review
         retry_review(store, args.task)
@@ -222,7 +251,14 @@ def dispatch_store(args, store):
                 raise ValueError("Рабочая копия изменилась после ревью; приёмка запрещена")
             task["state"] = "accepted"
             store.save(task, "accepted", expected=initial_state, expected_updated=task['updated'])
-            print("Приёмка записана. Исходная ветка не изменена. Diff: " + str(store.folder(args.task) / "changes.patch"))
+            if not store.db.in_transaction:
+                from .git_results import commit_if_enabled
+                commit_if_enabled(store, args.task)
+            current = store.get(args.task)
+            if current['data'].get('integration'):
+                print('Результат принят и применён: ' + current['data']['integration']['commit'])
+            else:
+                print("Приёмка записана. Diff: " + str(store.folder(args.task) / "changes.patch"))
 
 
 def main(argv=None):

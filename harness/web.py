@@ -21,15 +21,17 @@ from .projects import Projects, project_id
 PORT = 47831
 CONFIRM_PORT = 47832
 TITLES = {'approve_plan': 'Утвердить спецификацию и план', 'revise_plan': 'Вернуть план с замечаниями',
-          'accept_result': 'Принять результат', 'request_changes': 'Вернуть на доработку', 'reject_result': 'Отклонить результат'}
+          'accept_result': 'Принять', 'request_changes': 'Доработать', 'reject_result': 'Отклонить'}
 
 
 class WebApplication:
-    def __init__(self, root, instance, assets, receipt):
+    def __init__(self, root, instance, assets, receipt, track_deployment=False):
         self.root = Path(root).resolve()
         self.instance = instance
         self.assets = Path(assets).resolve()
         self.manifest = json.loads(Path(receipt).read_text())['assets']
+        self.receipt = str(Path(receipt).resolve())
+        self.track_deployment = track_deployment
         self.csrf = secrets.token_hex(32)
         self.cookie = secrets.token_hex(32)
         self.pending = {}
@@ -111,6 +113,8 @@ class WebApplication:
                         if match[2] == 'control':
                             control = operator.control(ident)
                             control['confirmation_urls'] = self.confirmation_urls(control, root)
+                            control['confirmation_widgets'] = {name: url.replace('/confirm?', '/confirm/embed?')
+                                for name, url in control['confirmation_urls'].items()}
                             return self.json(200, control)
                         if match[2] == 'events':
                             query = parse_qs(parsed.query)
@@ -144,8 +148,11 @@ class WebApplication:
             return self.static(parsed.path)
         except OperatorError as error:
             if confirmation:
+                embedded = path.split('?', 1)[0] == '/confirm/embed'
+                recovery = ('<p>Обновите карточку задачи и откройте форму ещё раз.</p>' if embedded else
+                    f'<a href="http://127.0.0.1:{PORT}/">Вернуться в панель и обновить задачу</a>')
                 _, content_type, data = self.page('Действие не выполнено', '<p>' + html.escape(str(error)) +
-                    f'</p><a href="http://127.0.0.1:{PORT}/">Вернуться в панель и обновить задачу</a>')
+                    '</p>' + recovery, embedded=embedded)
                 return error.status, content_type, data
             return self.error(error)
         except (ValueError, TypeError, KeyError, UnicodeError):
@@ -154,6 +161,16 @@ class WebApplication:
             return self.error(OperatorError('unavailable', 'Контроллер временно недоступен', 503))
 
     def static(self, request_path):
+        if self.track_deployment and request_path in {'/', '/index.html'}:
+            deployment_path = self.root / '.harness/web-ui.json'
+            if deployment_path.is_symlink():
+                raise OperatorError('invalid_build', 'Состояние сборки заменено ссылкой', 503)
+            deployment = json.loads(deployment_path.read_text())
+            if str(Path(deployment['receipt']).resolve()) != self.receipt:
+                candidate = WebApplication(self.root, self.instance, deployment['export'], deployment['receipt'])
+                candidate.static('/')
+                with self.guard:
+                    self.assets, self.manifest, self.receipt = candidate.assets, candidate.manifest, candidate.receipt
         relative = 'index.html' if request_path == '/' else request_path.lstrip('/')
         path = Path(relative)
         if path.is_absolute() or '..' in path.parts or any(p.startswith('.') for p in path.parts) or relative not in self.manifest:
@@ -164,12 +181,18 @@ class WebApplication:
         data = target.read_bytes()
         if hashlib.sha256(data).hexdigest() != self.manifest[relative]:
             raise OperatorError('invalid_build', 'Сборка изменилась после проверки', 503)
+        if self.track_deployment and relative == 'index.html':
+            script = ('<script>addEventListener("message",e=>{const d=e.data;'
+                f'if(e.origin!=="http://127.0.0.1:{CONFIRM_PORT}"||!d||d.type!=="tw:decision"||d.action!=="accept_result"||d.status!=="succeeded")return;'
+                'if([...document.querySelectorAll("iframe")].some(f=>f.contentWindow===e.source))location.reload();});</script>')
+            data += script.encode()
         return 200, mimetypes.guess_type(relative)[0] or 'application/octet-stream', data
 
     def confirm(self, method, parsed, headers, body):
         if parsed.path == '/projects':
             return self.connect_project(method, headers, body)
-        if parsed.path != '/confirm':
+        embedded = parsed.path == '/confirm/embed'
+        if parsed.path not in {'/confirm', '/confirm/embed'}:
             raise OperatorError('not_found', 'Страница не найдена', 404)
         fields = None
         pending = None
@@ -193,6 +216,8 @@ class WebApplication:
                 pending = self.pending.get(token)
             if not pending or pending['expires'] < time.time():
                 raise OperatorError('expired', 'Подтверждение истекло или уже использовано', 409)
+            if pending.get('embedded', False) != embedded:
+                raise OperatorError('invalid_token', 'Токен предназначен для другой формы', 403)
             try:
                 root = self.projects.resolve(pending['project'])
             except KeyError:
@@ -217,12 +242,16 @@ class WebApplication:
                     self.pending = {k: v for k, v in self.pending.items() if v['expires'] > time.time()}
                     if len(self.pending) >= 100:
                         raise OperatorError('busy', 'Закройте лишние подтверждения и повторите позже', 429)
-                    self.pending[token] = {'project': project_id(root), 'task': ident, 'payload': payload, 'revision': control['revision'], 'expires': time.time() + 600}
+                    self.pending[token] = {'project': project_id(root), 'task': ident, 'payload': payload, 'revision': control['revision'], 'expires': time.time() + 600, 'embedded': embedded}
                 field = '<label>Замечания<textarea name="text" required maxlength="16000"></textarea></label>' if action in {'revise_plan', 'request_changes', 'reject_result'} else ''
                 task = control['task']
                 confirmation_field = (f'<label>Введите TASK-{ident:03}<input name="confirmation" autocomplete="off" required></label>'
                     if action == 'reject_result' else '')
                 button_confirmation = '' if action == 'reject_result' else f' name="confirmation" value="TASK-{ident:03}"'
+                if embedded:
+                    return self.page(TITLES[action], f'<p class="context">{html.escape(root.name)} · TASK-{ident:03}</p>'
+                        f'<form method="post" action="/confirm/embed"><input type="hidden" name="token" value="{token}">{field}{confirmation_field}'
+                        f'<button type="submit"{button_confirmation}>{TITLES[action]}</button></form>', embedded=True)
                 return self.page(TITLES[action], f'<p>Проект <strong>{html.escape(root.name)}</strong> · {html.escape(project_id(root))}</p><p>Задача <strong>TASK-{ident:03}</strong></p><p>{html.escape(task["request"][:500])}</p>'
                     f'<p>Версия: <code>{current["version"]}</code></p><p>Риск: {html.escape(task.get("risk", "не указан"))}</p>'
                     '<p>Это подтверждение обслуживает контроллер. Приёмка не применяет изменения.</p>'
@@ -240,8 +269,21 @@ class WebApplication:
                 self.pending.pop(token, None)
             if result['status'] != 'succeeded':
                 raise OperatorError('action_failed', result['error']['message'], 422)
+            if payload['action'] == 'accept_result':
+                from .git_results import commit_if_enabled
+                try:
+                    commit_if_enabled(service.store, pending['task'])
+                except (OSError, RuntimeError, ValueError) as error:
+                    raise OperatorError('post_accept_failed', str(error), 503) from None
             message = ('План утверждён. Выполнение продолжится автоматически; отдельно нажимать «Запуск» не нужно.'
                 if payload['action'] == 'approve_plan' else 'Действие выполнено контроллером.')
+            if payload['action'] == 'accept_result' and service.store.get(pending['task'])['data'].get('integration'):
+                message = 'Результат принят и применён к основной ветке. Рабочая версия обновлена.'
+            if embedded:
+                event = json.dumps({'type': 'tw:decision', 'task': pending['task'], 'project': project_id(root),
+                    'action': payload['action'], 'status': 'succeeded'})
+                return self.page('Готово', '<p>' + message + '</p><script>parent.postMessage(' + event +
+                    f',"http://127.0.0.1:{PORT}");</script>', embedded=True)
             return self.page('Решение сохранено', f'<p>{message}</p><a href="http://127.0.0.1:{PORT}/?project={project_id(root)}&amp;task={pending["task"]}">Вернуться в панель</a>')
         finally:
             service.close()
@@ -266,10 +308,15 @@ class WebApplication:
         return self.page('Проект подключён', f'<p>{html.escape(project["name"])}</p>'
             f'<a href="http://127.0.0.1:{PORT}/?project={project["id"]}">Вернуться в панель</a>')
 
-    def page(self, title, content):
+    def page(self, title, content, embedded=False):
         text = '<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         text += '<title>Tw — подтверждение</title><style>body{font:16px system-ui;background:#f5f6fa;color:#172033;margin:0;padding:6vh 20px}main{max-width:620px;margin:auto;background:white;padding:32px;border:1px solid #dfe3ed;border-radius:16px}h1{font-size:24px}p{line-height:1.6;white-space:pre-wrap}code{word-break:break-all;font-size:12px}label{display:block;margin:24px 0}input,textarea{display:block;width:100%;box-sizing:border-box;padding:12px;margin-top:8px;border:1px solid #ccd3df;border-radius:8px;font:inherit}textarea{min-height:130px}button{background:#4338ca;color:white;border:0;border-radius:8px;padding:12px 18px;font:inherit;cursor:pointer}a{display:block;margin-top:24px;color:#4338ca}</style>'
-        text += '<main><small>TW · ПОДТВЕРЖДЕНИЕ КОНТРОЛЛЕРА</small><h1>' + html.escape(title) + '</h1>' + content + '</main></html>'
+        if embedded:
+            text += '<style>body{padding:0;background:transparent;font-size:13px}main{max-width:none;border:0;border-radius:0;padding:4px;background:transparent}p{margin:0 0 8px}.context{font-size:11px;color:#6b7280}label{margin:8px 0}textarea{min-height:80px}button{background:#466d91;padding:9px 14px;font-size:12px}</style>'
+            text += '<main>' + content + '</main><script>new ResizeObserver(()=>parent.postMessage({type:"tw:widget-size",height:document.querySelector("main").getBoundingClientRect().height},'
+            text += f'"http://127.0.0.1:{PORT}")).observe(document.querySelector("main"));</script></html>'
+        else:
+            text += '<main><small>TW · ПОДТВЕРЖДЕНИЕ КОНТРОЛЛЕРА</small><h1>' + html.escape(title) + '</h1>' + content + '</main></html>'
         return 200, 'text/html; charset=utf-8', text.encode()
 
 
@@ -296,7 +343,10 @@ def servers(application):
             script_hashes = []
             if content_type.startswith('text/html'):
                 script_hashes = ["'sha256-" + base64.b64encode(hashlib.sha256(item).digest()).decode() + "'" for item in re.findall(rb'<script[^>]*>(.*?)</script>', data, re.S) if item]
-            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' " + ' '.join(script_hashes) + "; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'")
+            embedded = self.server.server_port == CONFIRM_PORT and urlsplit(self.path).path == '/confirm/embed'
+            ancestors = f'http://127.0.0.1:{PORT}' if embedded else "'none'"
+            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' " + ' '.join(script_hashes) +
+                f"; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors {ancestors}; form-action 'self'; connect-src 'self'; frame-src http://127.0.0.1:{CONFIRM_PORT}")
             self.end_headers()
             try:
                 self.wfile.write(data)
