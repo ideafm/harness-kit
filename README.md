@@ -223,9 +223,10 @@ python3 -c 'from harness.security import doctor; print(doctor("codex"))'
 `python3 tests/codex/live_tw_smoke.py` проверяет также реальный чат Codex,
 MCP-постановку задачи и продолжение внешнего worker после выхода из чата.
 
-Старые `scripts/`, `hooks/`, `skills/`, `.claude-plugin/`, `ROADMAP.md` и
-`docs/workflow.md` описывают прежний Claude harness и не подключены к новому
-исполнителю. Текущая спецификация: [docs/specs/2026-11-02-codex-harness.md](docs/specs/2026-11-02-codex-harness.md).
+Общий вход проверок: `bash tests/run.sh` (тот же набор Codex).
+Неиспользуемый Claude harness удалён; прежние спецификации и планы сохранены
+как история решений, а не инструкции запуска. Текущая спецификация:
+[docs/specs/2026-11-02-codex-harness.md](docs/specs/2026-11-02-codex-harness.md).
 
 Основания для адаптера: [permissions](https://learn.chatgpt.com/docs/permissions),
 [developer commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli).

@@ -19,7 +19,7 @@ Build an autonomous Codex development runner. The active design is in
 - Keep enforcement outside agent-writable code. Fail closed when isolation
   cannot be verified. Never add a fallback to unrestricted execution.
 - Do not add code comments unless requested. Do not commit or merge without
-  explicit user authorization. Keep the legacy Claude implementation intact
-  during the initial Codex implementation.
+  explicit user authorization. The unused legacy Claude implementation was
+  retired with explicit user authorization on 2026-11-05.
 - Run `python3 -m unittest discover -s tests/codex -v` for the new runner.
-  Run `bash tests/run.sh` when changing legacy components.
+  `bash tests/run.sh` runs the same current suite.
