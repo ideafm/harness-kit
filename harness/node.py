@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -12,7 +13,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from .security import profile, regular_files, safe_env, toml
+from .security import profile, regular_files, read_regular, tree_entries, safe_env, toml
 from .state import atomic_json
 
 
@@ -188,7 +189,7 @@ const server=net.createServer();server.on('error',()=>console.log('node sandbox 
 
 
 def source_digest(workspace):
-    return hashlib.sha256(json.dumps({name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in regular_files(workspace)}, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps({name: hashlib.sha256(read_regular(workspace, name)).hexdigest() for name, path in regular_files(workspace)}, sort_keys=True).encode()).hexdigest()
 
 
 def prepared_toolchain(home):
@@ -221,7 +222,7 @@ def check(workspace, folder, config, interrupted=lambda: False, project_root=Non
     runtime = Path(toolchain['prepared_node'])
     dependencies = Path(toolchain['dependencies'])
     for name, key in (('package.json', 'package_sha256'), ('package-lock.json', 'lock_sha256')):
-        if hashlib.sha256((workspace / name).read_bytes()).hexdigest() != toolchain[key]:
+        if hashlib.sha256(read_regular(workspace, name)).hexdigest() != toolchain[key]:
             raise RuntimeError('Dependencies changed; a new prepared toolchain is required')
     doctor(config, home, dependencies)
     before = source_digest(workspace)
@@ -235,7 +236,9 @@ def check_snapshot(workspace, folder, config, interrupted, toolchain, runtime, d
     for name, path in regular_files(workspace):
         target = scratch / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, target)
+        target.write_bytes(read_regular(workspace, name))
+    if source_digest(scratch) != before:
+        raise RuntimeError('Snapshot changed during frontend copy')
     modules = scratch / 'node_modules'
     modules.mkdir()
     for path in dependencies.iterdir():
@@ -271,18 +274,17 @@ def check_snapshot(workspace, folder, config, interrupted, toolchain, runtime, d
     if export.is_symlink():
         raise RuntimeError('Symlink in frontend export')
     assets = {}
-    for directory, dirs, files in os.walk(export, followlinks=False):
-        if any((Path(directory) / name).is_symlink() for name in dirs + files):
-            raise RuntimeError('Symlink in frontend export')
-        for name in files:
-            path = Path(directory) / name
-            assets[str(path.relative_to(export))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    for name, info in tree_entries(export, include_protected=True):
+        if info is None or stat.S_ISLNK(info.st_mode):
+            raise RuntimeError('Protected path or symlink in frontend export')
+        if stat.S_ISREG(info.st_mode):
+            assets[name] = hashlib.sha256(read_regular(export, name)).hexdigest()
     published = folder / f'frontend-export-{time.time_ns()}'
     published.mkdir()
     for name, digest in assets.items():
         target = published / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(export / name, target)
+        target.write_bytes(read_regular(export, name))
         if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
             raise RuntimeError('Frontend export changed during publication')
     atomic_json(folder / 'frontend-receipt.json', {'source_digest': before, 'toolchain': toolchain,

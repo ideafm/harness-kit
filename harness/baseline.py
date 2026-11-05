@@ -1,9 +1,8 @@
 import hashlib
-import os
-import shutil
+import stat
 from pathlib import Path
 
-from .security import protected, regular_files, export_snapshot, git
+from .security import protected, regular_files, read_regular, tree_entries, export_snapshot, git
 from .state import atomic_json
 
 
@@ -11,16 +10,19 @@ def manifest(root):
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError('Основа отсутствует или заменена ссылкой')
-    for directory, dirs, files in os.walk(root, followlinks=False):
-        for name in dirs + files:
-            path = Path(directory) / name
-            if path.is_symlink() or protected(path.relative_to(root).as_posix()):
-                raise ValueError('Защищённый путь или ссылка в основе')
-            if path.is_file() and path.stat().st_nlink != 1:
-                raise ValueError('Жёсткая ссылка в основе')
-    return {name: {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-                   'mode': '100755' if path.stat().st_mode & 0o111 else '100644'}
-            for name, path in regular_files(root)}
+    for name, info in tree_entries(root, include_protected=True):
+        if info is None or stat.S_ISLNK(info.st_mode):
+            raise ValueError('Защищённый путь или ссылка в основе')
+        if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
+            raise ValueError('Жёсткая ссылка в основе')
+        if not stat.S_ISREG(info.st_mode) and not stat.S_ISDIR(info.st_mode):
+            raise ValueError('Необычный тип файла в основе')
+    result = {}
+    for name, path in regular_files(root):
+        content, info = read_regular(root, name, with_stat=True)
+        result[name] = {'sha256': hashlib.sha256(content).hexdigest(),
+                        'mode': '100755' if info.st_mode & 0o111 else '100644'}
+    return result
 
 
 def verify(store, task):
@@ -72,7 +74,12 @@ def prepare(store, ident, source_ident):
                 raise ValueError('Frontend источника изменился после сборки')
         atomic_json(folder / 'baseline-preparing.json', {'source_task': source_ident})
         for destination in (folder / 'input-baseline', folder / 'baseline-staging'):
-            shutil.copytree(source_workspace, destination, symlinks=True)
+            destination.mkdir()
+            for name, metadata in source_manifest.items():
+                copied = destination / name
+                copied.parent.mkdir(parents=True, exist_ok=True)
+                copied.write_bytes(read_regular(source_workspace, name))
+                copied.chmod(0o755 if metadata['mode'] == '100755' else 0o644)
             if manifest(destination) != source_manifest:
                 raise ValueError('Копия основы не совпадает с источником')
         if manifest(source_workspace) != source_manifest:

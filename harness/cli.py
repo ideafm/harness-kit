@@ -29,6 +29,14 @@ def parser():
     add.add_argument("--approval", choices=MODES, default="auto")
     sub.add_parser("status", help="Показать задачи и ожидания")
     sub.add_parser("doctor", help="Проверить ограничения на безопасных canary-файлах")
+    runtime_profile = sub.add_parser('profile', help='Профиль просмотра проекта')
+    runtime_profile.add_argument('action', choices=['configure', 'status'])
+    runtime_profile.add_argument('--adapter', dest='action_adapter', choices=['static', 'next-ui'])
+    view = sub.add_parser('view', help='Постоянный просмотр проекта')
+    view.add_argument('target', nargs='?', default='status')
+    view.add_argument('--mode', choices=['working', 'checked'], default='checked')
+    view.add_argument('--refresh', action='store_true')
+    view.add_argument('--serve', action='store_true', help=argparse.SUPPRESS)
     baseline = sub.add_parser('prepare-baseline', help='Подготовить основу из проверенного результата задачи')
     baseline.add_argument('task', type=task_id)
     baseline.add_argument('--from-task', required=True, type=task_id)
@@ -143,7 +151,12 @@ def dispatch(args):
 
 def dispatch_store(args, store):
     action = args.command
-    if action == "add":
+    if action in {'profile', 'view'}:
+        from .project_view import dispatch as view_dispatch
+        result = view_dispatch(args, store)
+        if result is not None:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif action == "add":
         if not args.request.strip():
             raise ValueError("Пустая задача")
         print(summary(store.add(args.request, getattr(args, "approval", "auto"))))

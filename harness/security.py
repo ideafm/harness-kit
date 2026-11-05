@@ -57,15 +57,54 @@ def export_snapshot(root, destination, ref):
     return manifest
 
 
+def tree_entries(root, include_protected=False):
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    def walk(folder, parts):
+        for name in sorted(os.listdir(folder)):
+            relative = '/'.join((*parts, name))
+            if protected(relative):
+                if include_protected:
+                    yield relative, None
+                continue
+            info = os.stat(name, dir_fd=folder, follow_symlinks=False)
+            yield relative, info
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=folder)
+                try:
+                    yield from walk(child, (*parts, name))
+                finally:
+                    os.close(child)
+    try:
+        yield from walk(descriptor, ())
+    finally:
+        os.close(descriptor)
+
+
 def regular_files(root):
-    for directory, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = [d for d in dirs if not protected(Path(directory, d).relative_to(root).as_posix())
-                   and not Path(directory, d).is_symlink()]
-        for name in files:
-            path = Path(directory, name)
-            relative = path.relative_to(root).as_posix()
-            if not protected(relative) and stat.S_ISREG(path.lstat().st_mode):
-                yield relative, path
+    for name, info in tree_entries(root):
+        if stat.S_ISREG(info.st_mode):
+            yield name, Path(root) / name
+
+
+def read_regular(root, name, with_stat=False):
+    relative = Path(name)
+    if relative.is_absolute() or not relative.parts or '..' in relative.parts or protected(name):
+        raise ValueError('Недопустимый путь обычного файла')
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in relative.parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        source = os.open(relative.parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+        with os.fdopen(source, 'rb') as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError('Источник не является независимым обычным файлом')
+            content = handle.read()
+            return (content, info) if with_stat else content
+    finally:
+        os.close(descriptor)
 
 
 def profile(workspace, writable):

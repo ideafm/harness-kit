@@ -5,7 +5,6 @@ import json
 import os
 import re
 import signal
-import shutil
 import subprocess
 import sys
 import threading
@@ -131,17 +130,23 @@ class Preview:
 
     def build_static(self, build, digest):
         from .node import source_digest
-        from .security import regular_files
+        from .security import regular_files, read_regular
         export = build / 'export'
         export.mkdir()
         assets = {}
+        expected = {name: hashlib.sha256(read_regular(self.workspace, name)).hexdigest()
+                    for name, _ in regular_files(self.workspace)}
+        if hashlib.sha256(json.dumps(expected, sort_keys=True).encode()).hexdigest() != digest:
+            raise ValueError('Исходники изменились до подготовки preview')
         for name, path in regular_files(self.workspace):
             if path.suffix.lower() not in {'.html', '.css', '.js', '.mjs', '.png', '.jpg', '.jpeg', '.svg', '.webp', '.ico', '.woff', '.woff2'}:
                 continue
             target = export / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, target)
+            target.write_bytes(read_regular(self.workspace, name))
             assets[name] = hashlib.sha256(target.read_bytes()).hexdigest()
+            if assets[name] != expected[name]:
+                raise ValueError('Исходник изменился при копировании preview')
         if source_digest(self.workspace) != digest or 'index.html' not in assets:
             raise ValueError('Исходники менялись при подготовке preview')
         atomic_json(build / 'frontend-receipt.json', {'source_digest': digest, 'export': str(export), 'assets': assets})

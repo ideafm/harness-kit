@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -11,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .approval import requires_approval, verify_documents, version
-from .security import doctor, export_snapshot, git, permission_args, protected, regular_files, safe_env, sandbox_command, toml
+from .security import doctor, export_snapshot, git, permission_args, protected, regular_files, read_regular, tree_entries, safe_env, sandbox_command, toml
 from .state import StateChanged, atomic_json
 from .quota import Guard, QuotaPause
 
@@ -344,6 +345,9 @@ class Runner:
         self.persist(task, "stage_started", {"stage": stage, "attempt": attempts[stage]})
         if stage == "check":
             self.report(task)
+            from .node import source_digest
+            checked_source = source_digest(workspace)
+            checked_changes = list(data['changes'])
             if self.check_override:
                 code = self.check_override(workspace, folder)
             elif data.get('frontend_toolchain') == 'next-ui':
@@ -356,10 +360,17 @@ class Runner:
                 data["feedback"] = "Проверки красные.\n" + (folder / "check.log").read_text(errors="replace")[-16000:]
                 task["stage"] = "implement"
             else:
+                if source_digest(workspace) != checked_source:
+                    raise RuntimeError('Исходники изменились во время проверок; результат не подтверждён')
                 self.report(task)
+                if data['changes'] != checked_changes:
+                    raise RuntimeError('Состав изменений изменился во время проверок')
                 data["check_receipt"] = {"command": self.config["check"], "exit_code": 0,
                     "time": time.time(), "changes": data["changes"],
-                    "log_sha256": hashlib.sha256((folder / "check.log").read_bytes()).hexdigest()}
+                    "log_sha256": hashlib.sha256((folder / "check.log").read_bytes()).hexdigest(),
+                    'source_digest': checked_source}
+                from .project_view import capture_checked
+                capture_checked(self.store, task)
                 data["feedback"] = "Проверки контроллера прошли: " + repr(self.config["check"])
                 task["stage"] = "review"
             self.persist(task, "checks_finished", {"exit_code": code})
@@ -431,23 +442,22 @@ class Runner:
         verify(self.store, task)
         data = task["data"]
         workspace = Path(data["workspace"])
-        for directory, dirs, files in os.walk(workspace, followlinks=False):
-            for name in dirs + files:
-                candidate = Path(directory, name)
-                relative = candidate.relative_to(workspace).as_posix()
-                if candidate.is_symlink() or protected(relative):
-                    raise RuntimeError(f"Защищённый путь или ссылка в результате: {relative}")
-                if candidate.is_file() and candidate.stat().st_nlink != 1:
-                    raise RuntimeError(f"Жёсткая ссылка в результате: {relative}")
+        for relative, info in tree_entries(workspace, include_protected=True):
+            if info is None or stat.S_ISLNK(info.st_mode):
+                raise RuntimeError(f"Защищённый путь или ссылка в результате: {relative}")
+            if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
+                raise RuntimeError(f"Жёсткая ссылка в результате: {relative}")
+            if not stat.S_ISREG(info.st_mode) and not stat.S_ISDIR(info.st_mode):
+                raise RuntimeError(f"Необычный тип файла в результате: {relative}")
         current = dict(regular_files(workspace))
         manifest = data["manifest"]
         changes = []
         patches = []
         for name in sorted(set(current) | set(manifest)):
             path = current.get(name)
-            new = path.read_bytes() if path else b""
+            new, info = read_regular(workspace, name, with_stat=True) if path else (b'', None)
             old_info = manifest.get(name)
-            mode = "100755" if path and path.stat().st_mode & 0o111 else "100644"
+            mode = "100755" if info and info.st_mode & 0o111 else "100644"
             if old_info and path and hashlib.sha256(new).hexdigest() == old_info["sha256"] and mode == old_info["mode"]:
                 continue
             if name not in data["files"]:
@@ -455,7 +465,7 @@ class Runner:
             if path is None and (workspace / name).is_symlink():
                 raise RuntimeError(f"Файл заменён ссылкой: {name}")
             if old_info and data.get('input_baseline'):
-                old = (self.store.folder(task['id']) / 'input-baseline' / name).read_bytes()
+                old = read_regular(self.store.folder(task['id']) / 'input-baseline', name)
             else:
                 old = git(self.store.root, "show", f"{data['base']}:{name}") if old_info else b""
             try:

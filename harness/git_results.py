@@ -1,11 +1,10 @@
 import hashlib
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
 from .runner import Runner, lock
-from .security import export_snapshot, git, regular_files
+from .security import export_snapshot, git, regular_files, read_regular
 from .state import atomic_json
 
 
@@ -77,8 +76,8 @@ def commit_accepted(store, ident):
         for name, source in current.items():
             target = destination / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
-            target.chmod(0o755 if source.stat().st_mode & 0o111 else 0o644)
+            target.write_bytes(read_regular(workspace, name))
+            target.chmod(0o755 if source_manifest[name]['mode'] == '100755' else 0o644)
             if hashlib.sha256(target.read_bytes()).hexdigest() != source_manifest[name]['sha256']:
                 raise ValueError('Исходники изменились при подготовке коммита')
         if manifest(workspace) != source_manifest:
