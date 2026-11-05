@@ -118,10 +118,7 @@ def prepare(root, ident=2):
     home.mkdir(parents=True, exist_ok=True)
     receipt = home / 'toolchain.json'
     if receipt.exists():
-        data = json.loads(receipt.read_text())
-        if data['node_sha256'] != hashlib.sha256(NODE.read_bytes()).hexdigest() or data['dependencies_sha256'] != tree_hash(home / 'dependencies/node_modules'):
-            raise RuntimeError('Toolchain изменился после подготовки')
-        return data
+        return prepared_toolchain(home)
     versions = {name: fetch('https://registry.npmjs.org/' + urllib.parse.quote(name, safe='') + '/latest')['version'] for name in PACKAGES}
     dependencies = home / 'dependencies'
     dependencies.mkdir(exist_ok=True)
@@ -194,18 +191,35 @@ def source_digest(workspace):
     return hashlib.sha256(json.dumps({name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in regular_files(workspace)}, sort_keys=True).encode()).hexdigest()
 
 
+def prepared_toolchain(home):
+    home = Path(home)
+    runtime = home / 'runtime/node'
+    dependencies = home / 'dependencies/node_modules'
+    receipt = home / 'toolchain.json'
+    paths = (home, home.parent, home.parent.parent, runtime.parent, runtime,
+             dependencies.parent, dependencies, receipt)
+    if any(path.is_symlink() for path in paths):
+        raise RuntimeError('Prepared toolchain path replaced with symlink')
+    data = json.loads(receipt.read_text())
+    if Path(data['prepared_node']) != runtime or Path(data['dependencies']) != dependencies:
+        raise RuntimeError('Prepared toolchain paths changed')
+    if not runtime.is_file() or not dependencies.is_dir():
+        raise RuntimeError('Prepared toolchain missing')
+    if any(path.is_symlink() for path in runtime.parent.rglob('*')):
+        raise RuntimeError('Symlink in prepared runtime')
+    if tree_hash(runtime.parent) != data['runtime_sha256']:
+        raise RuntimeError('Prepared Node runtime changed')
+    if tree_hash(dependencies) != data['dependencies_sha256']:
+        raise RuntimeError('Node dependencies changed')
+    return data
+
+
 def check(workspace, folder, config, interrupted=lambda: False, project_root=None):
     root = Path(project_root) if project_root is not None else folder.parents[2]
     home = root / '.harness/toolchains/next-ui'
-    toolchain = json.loads((home / 'toolchain.json').read_text())
+    toolchain = prepared_toolchain(home)
     runtime = Path(toolchain['prepared_node'])
     dependencies = Path(toolchain['dependencies'])
-    if tree_hash(dependencies) != toolchain['dependencies_sha256'] or hashlib.sha256(NODE.read_bytes()).hexdigest() != toolchain['node_sha256']:
-        raise RuntimeError('Node toolchain changed')
-    if {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in runtime_files()} != toolchain['runtime_files']:
-        raise RuntimeError('Node libraries changed')
-    if tree_hash(runtime.parent) != toolchain['runtime_sha256']:
-        raise RuntimeError('Prepared Node runtime changed')
     for name, key in (('package.json', 'package_sha256'), ('package-lock.json', 'lock_sha256')):
         if hashlib.sha256((workspace / name).read_bytes()).hexdigest() != toolchain[key]:
             raise RuntimeError('Dependencies changed; a new prepared toolchain is required')

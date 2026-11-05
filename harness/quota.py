@@ -10,9 +10,10 @@ from .state import atomic_json
 
 
 class QuotaPause(Exception):
-    def __init__(self, reason, retry_at):
+    def __init__(self, reason, retry_at, manual=False):
         super().__init__(reason)
         self.retry_at = retry_at
+        self.manual = manual
 
 
 def normalize(result, now):
@@ -30,8 +31,7 @@ def normalize(result, now):
                 raise ValueError('Некорректный расход лимита')
             if type(reset) not in (int, float) or not math.isfinite(reset) or reset <= now:
                 raise ValueError('Нет свежего времени сброса лимита')
-            if window.get('windowDurationMins') == 300 or used >= 96:
-                windows.append({'used_percent': used, 'resets_at': reset, 'window_minutes': window.get('windowDurationMins')})
+            windows.append({'used_percent': used, 'resets_at': reset, 'window_minutes': window.get('windowDurationMins')})
     if not any(window['window_minutes'] == 300 for window in windows):
         raise ValueError('Пятичасовой лимит недоступен')
     return {'observed_at': now, 'windows': windows, 'ordinary_usage_allowed': result.get('ordinaryUsageAllowed', True)}
@@ -95,15 +95,28 @@ class Guard:
             return
         now = time.time()
         try:
+            policy = self.store.home / 'quota-policy.json'
+            cap = None
+            if policy.is_symlink():
+                raise ValueError('Политика лимита заменена ссылкой')
+            if policy.exists():
+                cap = json.loads(policy.read_text())['stop_percent']
+                if type(cap) not in (int, float) or not math.isfinite(cap) or not 0 < cap <= 94:
+                    raise ValueError('Некорректный порог лимита')
             if starting or self.snapshot is None or now - self.snapshot['observed_at'] >= 15:
                 self.snapshot = read(self.config['codex'])
                 atomic_json(self.store.home / 'quota.json', self.snapshot)
             for window in self.snapshot['windows']:
-                threshold = 90 if starting and window['window_minutes'] == 300 else 94
+                threshold = (90 if starting else 94) if window['window_minutes'] == 300 else 96
+                if cap is not None and window['window_minutes'] == 300:
+                    threshold = min(threshold, cap)
                 if window['resets_at'] <= now:
                     self.snapshot = None
                     raise ValueError('Нужна свежая проверка после сброса')
                 if window['used_percent'] >= threshold:
+                    if cap is not None and window['window_minutes'] == 300 and window['used_percent'] >= cap:
+                        raise QuotaPause(f"Пауза по запросу пользователя: использовано {window['used_percent']}%, порог {cap}%",
+                                         None, manual=True)
                     raise QuotaPause(f"Защитная пауза: использовано {window['used_percent']}% лимита; порог пользователя 96%",
                                      window['resets_at'] + 60)
             if not self.snapshot['ordinary_usage_allowed']:

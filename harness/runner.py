@@ -225,10 +225,15 @@ class Runner:
                 raise
             except QuotaPause as error:
                 task['data']['attempts'] = previous_attempts
-                task['data'].update(retry_at=error.retry_at, reason=str(error))
-                task['state'] = 'rate_limited'
+                task['data']['reason'] = str(error)
+                if error.manual:
+                    task['data'].pop('retry_at', None)
+                else:
+                    task['data']['retry_at'] = error.retry_at
+                task['state'] = 'paused' if error.manual else 'rate_limited'
                 if self.store.get(ident)['state'] == 'running':
-                    self.persist(task, 'quota_wait', {'retry_at': error.retry_at, 'reason': str(error)})
+                    self.persist(task, 'quota_stopped' if error.manual else 'quota_wait',
+                                 {'retry_at': error.retry_at, 'reason': str(error)})
             except RateLimited:
                 count = task["data"].get("limit_count", 0) + 1
                 task["data"].update(limit_count=count, retry_at=time.time() + min(300 * 2 ** min(count - 1, 6), 18000),

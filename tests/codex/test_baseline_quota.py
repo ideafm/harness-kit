@@ -168,3 +168,49 @@ class QuotaTests(unittest.TestCase):
     def test_reader_has_bounded_failure_for_dead_server(self):
         with self.assertRaises((RuntimeError, TimeoutError)):
             read('/usr/bin/false', timeout=1)
+
+    def test_live_user_cap_stops_active_stage_at_50(self):
+        guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
+        guard.snapshot = self.snapshot(49)
+        atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': 50})
+        guard.check()
+        guard.snapshot = self.snapshot(50)
+        with self.assertRaises(QuotaPause) as error:
+            guard.check()
+        self.assertTrue(error.exception.manual)
+        self.assertIsNone(error.exception.retry_at)
+
+    def test_user_cap_pauses_without_automatic_retry_or_attempt_spending(self):
+        config = {'codex': 'codex', 'check': ['python3'], 'timeout': 10, 'max_attempts': 3, 'quota_guard': True}
+        atomic_json(self.store.home / 'config.json', config)
+        atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': 50})
+        backend = fixtures.FakeCodex()
+        with patch('harness.quota.read', return_value=self.snapshot(50)):
+            Runner(self.store, backend=backend).run(1)
+        task = self.store.get(1)
+        self.assertEqual(task['state'], 'paused')
+        self.assertNotIn('retry_at', task['data'])
+        self.assertEqual(task['data']['attempts'], {})
+        self.assertEqual(backend.calls, [])
+        self.assertEqual(self.store.events(1)[-1]['kind'], 'quota_stopped')
+        with patch('harness.quota.read') as fetch:
+            with self.assertRaises(ValueError):
+                Runner(self.store, backend=backend).run(1)
+            fetch.assert_not_called()
+
+    def test_five_hour_user_cap_does_not_pause_for_secondary_window(self):
+        atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': 50})
+        result = {'rateLimits': {
+            'primary': {'usedPercent': 20, 'windowDurationMins': 300, 'resetsAt': self.now + 3600},
+            'secondary': {'usedPercent': 67, 'windowDurationMins': 10080, 'resetsAt': self.now + 7200}}}
+        guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
+        with patch('harness.quota.read', return_value=normalize(result, self.now)):
+            guard.check(starting=True)
+
+    def test_invalid_user_cap_fails_closed(self):
+        guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
+        for cap in (True, 0, 95, '50'):
+            with self.subTest(cap=cap):
+                atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': cap})
+                with self.assertRaises(QuotaPause):
+                    guard.check(starting=True)
