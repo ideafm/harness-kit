@@ -154,8 +154,13 @@ def verify_servers(command):
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
     command = arguments[0] if arguments else "chat"
+    if command in {'install', 'diagnose'}:
+        from .installation import main as installation_main
+        return installation_main(arguments)
     if command in {"--help", "-h", "help"}:
         print("Tw — Codex со скиллом и контроллером задач\n\n"
+              "  tw install [--bin-dir PATH]  Установить launcher без изменения shell-конфигов\n"
+              "  tw diagnose [--sandbox]      Проверить установку до подключения проекта\n"
               "  tw init [--check 'команда']   Подключить текущий проект\n"
               "  tw                            Открыть сессию Codex с Tw\n"
               "  tw status / show TASK-NNN      Посмотреть задачи\n"

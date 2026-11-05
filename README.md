@@ -14,6 +14,18 @@
 
 ## Работа через Tw
 
+Установка launcher в существующий каталог PATH, без изменения shell-конфигов:
+
+```sh
+python3 bin/tw install
+tw diagnose --sandbox
+```
+
+Можно указать `--bin-dir /absolute/path/to/bin`. Чужие файлы установщик
+сохраняет; повторная установка тех же ссылок безопасна. Каталог должен уже
+существовать. Если его нет в PATH, установщик сообщит об этом.
+`tw diagnose` работает до подключения проекта и без запросов к модели.
+
 ```sh
 export PATH="/Users/twist/tmp/ai/harness-kit/bin:$PATH"
 cd /Users/twist/tmp/ai/harness-kit/lab/taskboard
