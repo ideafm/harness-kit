@@ -1,5 +1,6 @@
 import { afterEach,it,expect,vi } from 'vitest'
 import { act,fireEvent,render,screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { Control,Transport } from '@/lib/contracts'
 import { useTaskData } from '@/hooks/use-task-data'
 import { projectTransport,pendingSlot,readPending,writePending } from '@/lib/transport'
@@ -153,6 +154,7 @@ it('не повторяет создание при смене проекта и
  expect(base.post.mock.calls[1]).toEqual(base.post.mock.calls[0])
 })
 it('изолирует артефакты одинаковых task id и игнорирует позднее содержимое',async()=>{
+ const user=userEvent.setup()
  const base=api();const original=base.get.getMockImplementation()!
  let finish:(value:unknown)=>void=()=>{}
  base.get.mockImplementation((path:string,signal?:AbortSignal)=>{
@@ -164,16 +166,16 @@ it('изолирует артефакты одинаковых task id и игн
  })
  render(<TaskPanel transport={base}/>)
  fireEvent.click(await screen.findByRole('button',{name:'#1 Задача'}))
- fireEvent.click(await screen.findByRole('button',{name:'Изменения'}))
+ await user.click(await screen.findByRole('tab',{name:'Изменения'}))
  await vi.waitFor(()=>expect(base.get).toHaveBeenCalledWith('projects/a/tasks/1/artifacts/diff',expect.anything()))
- fireEvent.keyDown(screen.getByRole('dialog'),{key:'Escape'})
  fireEvent.click(screen.getByRole('button',{name:'Бета'}))
  await vi.waitFor(()=>expect(screen.getByRole('button',{name:'Бета'}).getAttribute('aria-current')).toBe('page'))
  fireEvent.click(await screen.findByRole('button',{name:'#1 Задача'}))
- fireEvent.click(await screen.findByRole('button',{name:'Изменения'}))
+ await user.click(await screen.findByRole('tab',{name:'Изменения'}))
  await screen.findByText('<b>Артефакт Беты</b>')
  await act(async()=>finish({task:1,artifact:'diff',text:'Чужой артефакт Альфы',truncated:false}))
  expect(screen.queryByText('Чужой артефакт Альфы')).toBeNull()
+ expect(screen.getByText('<b>Артефакт Беты</b>')).toBeTruthy()
  expect(document.querySelector('.artifact b')).toBeNull()
 })
 it('после ухода во время GET не продолжает polling и сохраняет операцию',async()=>{
