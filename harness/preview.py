@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -164,9 +165,17 @@ class Preview:
             app = self.app
         if parsed.path.startswith('/api/v1/'):
             if parsed.path == '/api/v1/session':
-                return 200, 'application/json', json.dumps({'data': {'csrf_token': '', 'confirmation_origin': ''}}).encode()
+                return 200, 'application/json', json.dumps({'request_id': str(uuid.uuid4()),
+                    'data': {'csrf_token': '', 'confirmation_origin': ''}}).encode()
             if parsed.path.endswith('/capabilities'):
-                return 200, 'application/json', json.dumps({'data': {'actions': [], 'events': True, 'apply': False}}).encode()
+                if app is None:
+                    return 503, 'text/plain', b'Preview not ready'
+                status, content_type, body = app.dispatch('GET', path, {'Host': f'127.0.0.1:{PORT}'})
+                if status == 200:
+                    envelope = json.loads(body)
+                    envelope['data'].update(actions=[], apply=False)
+                    body = json.dumps(envelope, ensure_ascii=False).encode()
+                return status, content_type, body
             if not re.fullmatch(r'/api/v1/(?:projects|(?:projects/[a-f0-9]{16}/)?(?:status|tasks/[1-9][0-9]*(?:/(?:control|events|artifacts/[a-z]+))?))', parsed.path):
                 return 403, 'text/plain', b'Read-only route unavailable'
             if app is None:

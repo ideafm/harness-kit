@@ -110,6 +110,45 @@ class PreviewTests(unittest.TestCase):
         self.assertFalse(data['current'])
         self.assertEqual(self.preview.dispatch('GET', '/', self.headers)[0], 200)
 
+    def test_readonly_api_has_decodable_envelopes_and_project_identity(self):
+        from harness.projects import project_id
+        ident = project_id(self.store.root)
+        paths = ('/api/v1/session', '/api/v1/capabilities',
+                 f'/api/v1/projects/{ident}/capabilities',
+                 f'/api/v1/projects/{ident}/status', '/api/v1/tasks/1/control')
+        for path in paths:
+            with self.subTest(path=path):
+                status, _, body = self.preview.dispatch('GET', path, self.headers)
+                self.assertEqual(status, 200)
+                envelope = json.loads(body)
+                self.assertIsInstance(envelope['request_id'], str)
+                self.assertTrue(envelope['request_id'])
+                if path.endswith('/capabilities'):
+                    self.assertEqual(envelope['data']['project_id'], ident)
+                    self.assertEqual(envelope['data']['actions'], [])
+                    self.assertFalse(envelope['data']['apply'])
+                if path.endswith('/control'):
+                    self.assertEqual(envelope['data']['confirmation_widgets'], {})
+
+    def test_readonly_capabilities_preserve_selected_project_and_reject_unknown(self):
+        from harness.projects import project_id
+        other = fixtures.HarnessTests()
+        other.setUp()
+        try:
+            root = other.root.resolve()
+            self.preview.app.projects.add(str(root))
+            ident = project_id(root)
+            status, _, body = self.preview.dispatch('GET', f'/api/v1/projects/{ident}/capabilities', self.headers)
+            self.assertEqual(status, 200)
+            data = json.loads(body)['data']
+            self.assertEqual(data['project_id'], ident)
+            self.assertEqual(data['actions'], [])
+            unknown = '0' * 16
+            status, _, _ = self.preview.dispatch('GET', f'/api/v1/projects/{unknown}/capabilities', self.headers)
+            self.assertEqual(status, 404)
+        finally:
+            other.tearDown()
+
     def test_rejection_removes_result_from_preview_without_changing_main(self):
         before = git(self.store.root, 'rev-parse', 'HEAD')
         self.fixture.cli('reject', '1', '--reason', 'Не подходит', '--confirm', 'TASK-001')
