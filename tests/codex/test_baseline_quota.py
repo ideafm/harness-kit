@@ -214,3 +214,25 @@ class QuotaTests(unittest.TestCase):
                 atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': cap})
                 with self.assertRaises(QuotaPause):
                     guard.check(starting=True)
+
+    def test_next_window_checkpoint_does_not_stop_current_window(self):
+        guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
+        activation = self.now + 3600
+        atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': 30, 'activate_at': activation})
+        with patch('harness.quota.read', return_value=self.snapshot(52)):
+            guard.check(starting=True)
+        after = {'observed_at': activation + 1, 'ordinary_usage_allowed': True,
+                 'windows': [{'window_minutes': 300, 'used_percent': 30, 'resets_at': activation + 18000}]}
+        with patch('harness.quota.time.time', return_value=activation + 1), \
+                patch('harness.quota.read', return_value=after):
+            with self.assertRaises(QuotaPause) as error:
+                Guard(self.store, guard.config).check(starting=True)
+        self.assertTrue(error.exception.manual)
+
+    def test_next_window_checkpoint_keeps_current_safety_ceiling(self):
+        atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': 30, 'activate_at': self.now + 3600})
+        guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
+        with patch('harness.quota.read', return_value=self.snapshot(90)):
+            with self.assertRaises(QuotaPause) as error:
+                guard.check(starting=True)
+        self.assertFalse(error.exception.manual)

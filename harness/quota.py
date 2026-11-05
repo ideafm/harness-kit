@@ -100,9 +100,15 @@ class Guard:
             if policy.is_symlink():
                 raise ValueError('Политика лимита заменена ссылкой')
             if policy.exists():
-                cap = json.loads(policy.read_text())['stop_percent']
+                settings = json.loads(policy.read_text())
+                cap = settings['stop_percent']
                 if type(cap) not in (int, float) or not math.isfinite(cap) or not 0 < cap <= 94:
                     raise ValueError('Некорректный порог лимита')
+                activate_at = settings.get('activate_at', 0)
+                if type(activate_at) not in (int, float) or not math.isfinite(activate_at) or activate_at < 0:
+                    raise ValueError('Некорректное время контрольной точки')
+                if now < activate_at:
+                    cap = None
             if starting or self.snapshot is None or now - self.snapshot['observed_at'] >= 15:
                 self.snapshot = read(self.config['codex'])
                 atomic_json(self.store.home / 'quota.json', self.snapshot)
