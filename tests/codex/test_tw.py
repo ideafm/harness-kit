@@ -13,7 +13,7 @@ from harness.mcp import Server, serve
 from harness.runner import lock
 from harness.service import KIT, TaskService
 from harness.state import Store, atomic_json
-from harness.tw import BLOCK, chat_command, connect, verify_servers
+from harness.tw import BLOCK, chat_command, connect, verify_servers, main, register_project
 
 
 class TwTests(unittest.TestCase):
@@ -66,6 +66,47 @@ class TwTests(unittest.TestCase):
     def test_source_controller_cannot_be_its_own_project(self):
         with self.assertRaises(ValueError):
             connect(KIT)
+
+    def test_first_chat_connects_and_registers_before_launch(self):
+        with patch('harness.tw.register_project') as register, \
+                patch('harness.tw.doctor'), patch('harness.tw.verify_servers'), \
+                patch('harness.tw.os.execvpe') as launch, contextlib.redirect_stdout(io.StringIO()):
+            main(['chat', '--project', str(self.root)])
+        self.assertTrue((self.root / '.harness/tw.json').is_file())
+        register.assert_called_once_with(self.root)
+        launch.assert_called_once()
+        self.assertIn('"." = "read"', ' '.join(launch.call_args.args[1]))
+
+    def test_unknown_check_fails_before_model_or_registration(self):
+        (self.root / '.harness/config.json').unlink()
+        with patch('harness.tw.inferred_check', return_value=None), \
+                patch('harness.tw.sys.stdin.isatty', return_value=False), \
+                patch('harness.tw.register_project') as register, patch('harness.tw.os.execvpe') as launch, \
+                patch('harness.tw.harness_main', side_effect=ValueError('missing check')):
+            with self.assertRaises((ValueError, SystemExit)):
+                main(['chat', '--project', str(self.root)])
+        launch.assert_not_called()
+        register.assert_not_called()
+
+    def test_connect_rejects_symlink_before_reading_target(self):
+        alias = self.root.parent / 'alias'
+        alias.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            connect(alias)
+        self.assertFalse((self.root / 'AGENTS.md').exists())
+
+    def test_connection_registers_in_panel_without_losing_tasks(self):
+        from harness.projects import Projects, project_id
+        panel = self.root.parent / 'tw-web'
+        (panel / '.harness').mkdir(parents=True)
+        atomic_json(panel / '.harness/config.json', {'codex': 'codex'})
+        task = self.service.submit('keep existing', start=False)['task']
+        with patch('harness.tw.KIT', self.root.parent / 'kit'):
+            record = register_project(self.root)
+            self.assertEqual(register_project(self.root), record)
+        self.assertEqual(record['id'], project_id(self.root))
+        self.assertIn(record['id'], [p['id'] for p in Projects(panel).listing()])
+        self.assertEqual(self.service.show(task['id'])['request'], 'keep existing')
 
     def test_chat_has_readonly_permissions_and_required_mcp(self):
         command = chat_command(self.root)

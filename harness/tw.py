@@ -26,7 +26,8 @@ def inferred_check(root):
 
 
 def connect(root, check=None, model=None):
-    root = Path(root).resolve()
+    from .projects import Projects
+    root = Projects(KIT).validate(str(Path(root).absolute())).resolve()
     if root == KIT:
         raise ValueError("Не подключайте контроллер к самому себе; используйте отдельный проект")
     manifest = root / ".harness/tw.json"
@@ -82,6 +83,13 @@ def connect(root, check=None, model=None):
     owned_files["AGENTS.md"] = hashlib.sha256(agents.read_bytes()).hexdigest()
     atomic_json(manifest, {"version": 1, "kit": str(KIT), "files": owned_files})
     print(f"Tw подключён: {root}\nТеперь запустите tw и опишите задачу обычным языком.")
+
+
+def register_project(root):
+    from .projects import Projects
+    panel = KIT.parent / 'tw-web'
+    registry = panel if (panel / '.harness/config.json').is_file() else root
+    return Projects(registry).add(str(root))
 
 
 def verified_setup_paths(root):
@@ -196,14 +204,17 @@ def main(argv=None):
     parser.add_argument("--model")
     args = parser.parse_args(arguments)
     try:
-        root = args.project.resolve()
+        from .projects import Projects
+        root = Projects(KIT).validate(str(args.project.absolute())).resolve()
         if args.command == "init":
             connect(root, args.check, args.model)
+            register_project(root)
             return
-        if args.check or args.model:
-            raise ValueError("check/model задаются при tw init")
         if not (root / ".harness/tw.json").is_file():
-            raise ValueError("Сначала выполните tw init в корне проекта")
+            connect(root, args.check, args.model)
+        elif args.check or args.model:
+            raise ValueError("check/model задаются при первом подключении или tw init")
+        register_project(root)
         verified_setup_paths(root)
         config = json.loads((root / ".harness/config.json").read_text())
         doctor(config["codex"])
