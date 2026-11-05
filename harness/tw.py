@@ -2,6 +2,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -125,14 +126,29 @@ def verify_servers(command):
     options = command[1:-1]
     if options and options[0] == "--no-daemon":
         options = options[1:]
-    if options and options[0] == "exec":
+    headless = bool(options and options[0] == "exec")
+    if headless:
+        if "--ignore-user-config" not in options:
+            raise RuntimeError("Headless Tw требует изоляции пользовательской конфигурации")
         options = [x for x in options[1:] if x not in {"--ignore-user-config", "--ephemeral", "--json"}]
-    result = subprocess.run([command[0], *options, "mcp", "list", "--json"], env=safe_env(),
-                            capture_output=True, text=True, timeout=30, check=True)
-    entries = json.loads(result.stdout)
-    enabled = [entry["name"] for entry in entries if entry.get("enabled", True)]
-    if enabled != ["tw"]:
-        raise RuntimeError("Не удалось изолировать MCP: включены посторонние серверы. Сессия не запущена.")
+    for attempt in range(2):
+        result = subprocess.run([command[0], *options, "mcp", "list", "--json"], env=safe_env(),
+                                capture_output=True, text=True, timeout=30, check=True)
+        entries = json.loads(result.stdout)
+        enabled = [entry["name"] for entry in entries if entry.get("enabled", True)]
+        if enabled == ["tw"]:
+            return
+        if attempt or "tw" not in enabled:
+            break
+        for name in enabled:
+            if name != "tw":
+                if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                    raise RuntimeError("Имя MCP не поддерживает безопасное отключение")
+                override = ["-c", "mcp_servers." + name + ".enabled=false"]
+                options.extend(override)
+                if not headless:
+                    command[-1:-1] = override
+    raise RuntimeError("Не удалось изолировать MCP: включены посторонние серверы. Сессия не запущена.")
 
 
 def main(argv=None):

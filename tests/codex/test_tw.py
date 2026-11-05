@@ -88,6 +88,52 @@ class TwTests(unittest.TestCase):
         with patch('harness.tw.subprocess.run', return_value=result):
             verify_servers(chat_command(self.root))
 
+    def test_inherited_servers_are_disabled_in_launch_and_rechecked(self):
+        foreign = 'foreign-server'
+        initial = Mock(stdout=json.dumps([{'name': foreign, 'enabled': True}, {'name': 'tw', 'enabled': True}]))
+        isolated = Mock(stdout=json.dumps([{'name': foreign, 'enabled': False}, {'name': 'tw', 'enabled': True}]))
+        for headless in (False, True):
+            with self.subTest(headless=headless):
+                command = chat_command(self.root, headless=headless, prompt='status')
+                with patch('harness.tw.subprocess.run', side_effect=[initial, isolated]) as run:
+                    verify_servers(command)
+                override = 'mcp_servers.' + foreign + '.enabled=false'
+                if headless:
+                    self.assertNotIn(override, command)
+                    self.assertIn('--ignore-user-config', command)
+                else:
+                    self.assertIn(override, command)
+                self.assertIn(override, run.call_args.args[0])
+                self.assertEqual(command[-1], 'status')
+                self.assertEqual(run.call_count, 2)
+
+    def test_unsupported_server_name_fails_closed(self):
+        result = Mock(stdout=json.dumps([{'name': 'foreign."quoted"', 'enabled': True}, {'name': 'tw', 'enabled': True}]))
+        with patch('harness.tw.subprocess.run', return_value=result):
+            with self.assertRaisesRegex(RuntimeError, 'Имя MCP'):
+                verify_servers(chat_command(self.root))
+
+    def test_headless_without_ignore_user_config_fails_closed(self):
+        command = chat_command(self.root, headless=True)
+        command.remove('--ignore-user-config')
+        with patch('harness.tw.subprocess.run') as run:
+            with self.assertRaises(RuntimeError):
+                verify_servers(command)
+        run.assert_not_called()
+
+    def test_missing_tw_rejects_without_retry(self):
+        result = Mock(stdout=json.dumps([{'name': 'foreign', 'enabled': True}]))
+        with patch('harness.tw.subprocess.run', return_value=result) as run:
+            with self.assertRaises(RuntimeError):
+                verify_servers(chat_command(self.root))
+        self.assertEqual(run.call_count, 1)
+
+    def test_isolation_recheck_failure_does_not_start_session(self):
+        initial = Mock(stdout=json.dumps([{'name': 'foreign', 'enabled': True}, {'name': 'tw', 'enabled': True}]))
+        with patch('harness.tw.subprocess.run', side_effect=[initial, subprocess.TimeoutExpired('codex', 30)]):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                verify_servers(chat_command(self.root))
+
     def test_submit_preserves_text_without_start_when_requested(self):
         result = self.service.submit('original task', start=False)
         self.assertEqual(result['task']['state'], 'queued')
