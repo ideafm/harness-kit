@@ -45,3 +45,22 @@ it('возвращает индикатор check → implement → check без
  expect(screen.getByLabelText(/Проверки/).closest('li')?.getAttribute('aria-current')).toBe('step')
  expect(screen.getAllByRole('listitem')).toHaveLength(5)
 })
+
+it('предоставляет сведения о каждом этапе с клавиатуры без фиктивного завершения',()=>{
+ render(<TaskProgress task={{id:7,state:'running',stage:'review',updated:1,request:'Запрос',artifacts:[]}}/>)
+ const steps=screen.getAllByLabelText(/Спецификация и план|Реализация|Проверки|Ревью|Приёмка/).filter(element=>element.hasAttribute('tabindex'))
+ expect(steps).toHaveLength(5)
+ for(const step of steps)expect(step.getAttribute('tabindex')).toBe('0')
+ expect(steps[0].getAttribute('data-tip')).toContain('завершение не подтверждено')
+ expect(steps[3].getAttribute('data-tip')).toContain('текущий этап')
+})
+
+it('подписывает большой ряд и оставляет компактный ряд точками',()=>{
+ const task={id:7,state:'running',stage:'implement',updated:1,request:'Запрос',artifacts:[]}
+ const view=render(<TaskProgress task={task}/> )
+ expect(screen.getByText('Разработка')).toBeTruthy()
+ expect(screen.getByText('План')).toBeTruthy()
+ view.rerender(<TaskProgress task={task} compact/> )
+ expect(screen.queryByText('Разработка')).toBeNull()
+ expect(screen.getAllByRole('listitem')).toHaveLength(5)
+})

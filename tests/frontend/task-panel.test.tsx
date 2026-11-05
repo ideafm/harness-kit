@@ -18,12 +18,13 @@ it('показывает preview до решений и безопасные п�
  expect(screen.getByText('<script>ошибка</script>')).toBeTruthy()
  expect(screen.getByText('Ошибка коммита')).toBeTruthy()
  expect(view.container.querySelector('script')).toBeNull()
- expect(screen.queryByRole('button',{name:'Подробности применения'})).toBeNull()
+ expect(screen.queryByText('Подробности применения')).toBeNull()
 })
 it('раскрывает короткий коммит и ветку по запросу',()=>{
  render(<TaskCard task={{id:1,state:'accepted',stage:'done',updated:1,request:'Запрос',artifacts:[],integration:{source_commit:'source',commit:'1234567890',branch:'main'}}} transport={{get:vi.fn(),post:vi.fn()}} onRefresh={vi.fn()}/> )
- expect(screen.queryByText('Коммит: 12345678')).toBeNull()
- fireEvent.click(screen.getByRole('button',{name:'Подробности применения'}))
+ expect(screen.getByText('Подробности применения').closest('details')?.open).toBe(false)
+ fireEvent.click(screen.getByText('Подробности применения'))
+ expect(screen.getByText('Подробности применения').closest('details')?.open).toBe(true)
  expect(screen.getByText('Коммит: 12345678')).toBeTruthy()
  expect(screen.getByText('Ветка: main')).toBeTruthy()
 })
@@ -31,9 +32,12 @@ it('показывает фактическую сводку и причину �
  const task={id:84,state:'blocked',stage:'implement',updated:1,request:'Исходный запрос',artifacts:[],implementation_summary:'Проверки успешны, результат ожидает решения.',reason:'Исчерпаны попытки'}
  render(<TaskCard task={task} transport={{get:vi.fn(),post:vi.fn()} as Transport} onRefresh={vi.fn()}/> )
  expect(screen.getByText(task.implementation_summary)).toBeTruthy()
+ expect(screen.getByText(task.implementation_summary).closest('details')?.open).toBe(false)
+ fireEvent.click(screen.getByText('Подробности результата'))
+ expect(screen.getByText(task.implementation_summary).closest('details')?.open).toBe(true)
  expect(screen.getByText(task.reason)).toBeTruthy()
  expect(screen.getByText(/Конкретные рекомендации для человеческой проверки не предоставлены/)).toBeTruthy()
- expect(screen.getByRole('button',{name:'Проверки'})).toBeTruthy()
+ expect(screen.getByRole('tab',{name:'Проверки'})).toBeTruthy()
 })
 it('обозначает отсутствие сводки и причины, сохраняя конкретный вопрос',()=>{
  const task={id:85,state:'waiting',stage:'plan',updated:1,request:'Запрос',artifacts:[],question:'Какой формат результата нужен?'}
@@ -105,20 +109,21 @@ import { TaskActions } from '@/components/task-actions'
 import { SidebarProvider,SidebarTrigger } from '@/components/ui/sidebar'
 import { ProjectSidebar } from '@/components/project-sidebar'
 
-it('открывает исходный request с клавиатуры, удерживает и возвращает фокус',async()=>{
+it('переключает материалы с клавиатуры и показывает полный request безопасным текстом',async()=>{
  const user=userEvent.setup()
  render(<TaskTabs task={{id:1,state:'review',stage:'done',updated:1,request:'Полный запрос\n<script>текст</script>',artifacts:[]}} transport={{get:vi.fn(),post:vi.fn()} as Transport} events={false}/>)
- const trigger=screen.getByRole('button',{name:'Исходная задача'})
- await user.tab();expect(document.activeElement).toBe(trigger)
- await user.keyboard('{Enter}')
- const dialog=await screen.findByRole('dialog',{name:'Исходная задача'})
- expect(dialog.textContent).toContain('<script>текст</script>')
- expect(dialog.querySelector('script')).toBeNull()
- await user.keyboard('{Tab}')
- expect(dialog.contains(document.activeElement)).toBe(true)
- await user.keyboard('{Escape}')
- await vi.waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull())
- expect(document.activeElement).toBe(trigger)
+ const history=screen.getByRole('tab',{name:'История'})
+ await user.tab();expect(document.activeElement).toBe(history)
+ await user.keyboard('{ArrowRight}')
+ const request=screen.getByRole('tab',{name:'Исходная задача'})
+ expect(document.activeElement).toBe(request)
+ expect(request.getAttribute('aria-selected')).toBe('true')
+ const panel=screen.getByRole('tabpanel')
+ expect(panel.textContent).toBe('Полный запрос\n<script>текст</script>')
+ expect(panel.querySelector('script')).toBeNull()
+ await user.keyboard('{ArrowRight}')
+ expect(screen.getByRole('tab',{name:'План'}).getAttribute('aria-selected')).toBe('true')
+ expect(screen.getAllByText('Документ ещё не предоставлен.')).toHaveLength(2)
 })
 it('открывает мобильный sidebar с клавиатуры, закрывает Escape и возвращает фокус',async()=>{
  vi.stubGlobal('innerWidth',390)
@@ -158,11 +163,74 @@ it('поиск, фильтр и страницы не меняют выбран�
  await screen.findByRole('button',{name:'#1 Задача 1'})
  fireEvent.click(screen.getByRole('button',{name:'Далее'}))
  expect(screen.getByRole('button',{name:'#7 Задача 7'})).toBeTruthy()
+ fireEvent.click(screen.getByRole('button',{name:'Обновить'}))
+ await vi.waitFor(()=>expect(get.mock.calls.filter(([path])=>path.endsWith('/status')).length).toBeGreaterThan(1))
+ expect(screen.getByText('2 / 2')).toBeTruthy()
  fireEvent.click(screen.getByRole('button',{name:'Бэклог'}))
  expect(screen.getByText('1 / 1')).toBeTruthy()
  expect(screen.queryByRole('button',{name:'#6 Задача 6'})).toBeNull()
  expect(new URLSearchParams(window.location.search).get('task')).toBe('1')
  fireEvent.change(screen.getByLabelText('Поиск задач'),{target:{value:'Несуществующая'}})
  expect(screen.getByText('Нет результатов поиска.')).toBeTruthy()
+ window.history.replaceState(null,'','/')
+})
+
+it('сохраняет ошибки, повтор и усечение материалов во вкладках',async()=>{
+ const get=vi.fn().mockRejectedValueOnce(Error('Не удалось получить проверки')).mockResolvedValue({text:'<script>вывод</script>',truncated:true})
+ const user=userEvent.setup()
+ const view=render(<TaskTabs task={{id:9,state:'review',stage:'done',updated:1,request:'Запрос',artifacts:['checks']}} transport={{get,post:vi.fn()} as Transport} events={false}/>)
+ await user.click(screen.getByRole('tab',{name:'Проверки'}))
+ expect((await screen.findByRole('alert')).textContent).toContain('Не удалось получить проверки')
+ await user.click(screen.getByRole('button',{name:'Повторить'}))
+ expect(await screen.findByText('<script>вывод</script>')).toBeTruthy()
+ expect(screen.getByText('Артефакт усечён контроллером.')).toBeTruthy()
+ expect(view.container.querySelector('script')).toBeNull()
+ expect(get).toHaveBeenCalledTimes(2)
+})
+it('не показывает запоздалый материал после выбора другой задачи',async()=>{
+ let resolve:(value:{text:string;truncated:boolean})=>void=()=>{}
+ const get=vi.fn().mockImplementation(()=>new Promise(done=>{resolve=done}))
+ const props={transport:{get,post:vi.fn()} as Transport,events:false}
+ const view=render(<TaskTabs {...props} task={{id:1,state:'running',stage:'check',updated:1,request:'Первый запрос',artifacts:['checks']}}/>)
+ await userEvent.setup().click(screen.getByRole('tab',{name:'Проверки'}))
+ await vi.waitFor(()=>expect(get).toHaveBeenCalledTimes(1))
+ view.rerender(<TaskTabs {...props} task={{id:2,state:'running',stage:'implement',updated:2,request:'Второй запрос',artifacts:[]}}/>)
+ resolve({text:'Поздний вывод первой задачи',truncated:false})
+ await vi.waitFor(()=>expect(screen.getByRole('tab',{name:'История'}).getAttribute('aria-selected')).toBe('true'))
+ expect(screen.queryByText('Поздний вывод первой задачи')).toBeNull()
+})
+
+it.each(['checks','review'])('открывает %s при ожидании приёмки и сохраняет историю в раскрытии',async(name)=>{
+ const get=vi.fn().mockImplementation(async(path:string)=>path.includes('/events?')?{items:[],next_cursor:'0',has_more:false}:{text:'Фактический отчёт',truncated:false})
+ render(<TaskTabs task={{id:1,state:'review',stage:'done',updated:1,request:'Запрос',artifacts:[name]}} transport={{get,post:vi.fn()} as Transport} events/>)
+ expect(screen.getByRole('tab',{name:name==='checks'?'Проверки':'Ревью'}).getAttribute('aria-selected')).toBe('true')
+ await userEvent.setup().click(screen.getByRole('tab',{name:'История'}))
+ const disclosure=screen.getByText('Полная история событий').closest('details')
+ expect(disclosure?.open).toBe(false)
+ fireEvent.click(screen.getByText('Полная история событий'))
+ expect(disclosure?.open).toBe(true)
+})
+
+it('открывает страницу выбранной по URL задачи и убирает Markdown только из заголовка',async()=>{
+ const tasks=Array.from({length:7},(_,index)=>({id:index+1,state:'running',stage:'implement',updated:1,request:'# Задача '+(index+1)+'\n<script>текст</script>',artifacts:[]}))
+ window.history.replaceState(null,'','/?project=main&task=7')
+ const get=vi.fn().mockImplementation(async(path:string)=>{
+  if(path==='projects')return {items:[{id:'main',name:'Проект'}],default_project_id:'main',connect_url:''}
+  if(path==='session')return {csrf_token:'csrf'}
+  if(path.endsWith('/status'))return {project:'main',tasks,worker:{running:false}}
+  if(path.endsWith('/capabilities'))return {actions:[],events:false,apply:false}
+  return {task:tasks[6],revision:'r1',allowed_actions:[],plan:null,result:null,confirmation_urls:{}}
+ })
+ render(<TaskPanel transport={{get,post:vi.fn()} as Transport}/>)
+ await screen.findByRole('button',{name:'#7 Задача 7'})
+ expect(screen.getByText('2 / 2')).toBeTruthy()
+ expect(screen.getByRole('heading',{name:'Задача 7'})).toBeTruthy()
+ fireEvent.click(screen.getByRole('button',{name:'Назад'}))
+ fireEvent.click(screen.getByRole('button',{name:'Обновить'}))
+ await vi.waitFor(()=>expect(get.mock.calls.filter(([path])=>path.endsWith('/status')).length).toBeGreaterThan(1))
+ expect(screen.getByText('1 / 2')).toBeTruthy()
+ await userEvent.setup().click(screen.getByRole('tab',{name:'Исходная задача'}))
+ expect(screen.getByRole('tabpanel').textContent).toBe(tasks[6].request)
+ expect(document.querySelector('script')).toBeNull()
  window.history.replaceState(null,'','/')
 })
