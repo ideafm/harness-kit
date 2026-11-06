@@ -7,6 +7,13 @@ describe('Граница оператора',()=>{
  it('передаёт CSRF, revision и прежний ключ',async()=>{const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({request_id:'r',data:{status:'pending'}})));vi.stubGlobal('fetch',fetcher);await httpTransport.post('tasks/1/actions',{action:'pause'},'same-key','csrf','rev');expect(fetcher).toHaveBeenCalledWith('/api/v1/tasks/1/actions',expect.objectContaining({headers:expect.objectContaining({'Idempotency-Key':'same-key','X-CSRF-Token':'csrf','If-Match':'rev'})}))})
 })
 import { projectTransport } from '@/lib/transport'
+it('просмотр использует scoped URL и заголовки, сохраняя failed внутри data',async()=>{
+ const operation={operation_id:'op',task_id:1,status:'failed',error:{code:'build',message:'Ошибка подготовки',retryable:true}}
+ const fetcher=vi.fn().mockImplementation(async()=>new Response(JSON.stringify({request_id:'r',data:operation})))
+ vi.stubGlobal('fetch',fetcher)
+ await expect(projectTransport(httpTransport,'project').post('tasks/1/view',{action:'select',mode:'checked'},'key','csrf','view-rev')).resolves.toEqual(operation)
+ expect(fetcher).toHaveBeenCalledWith('/api/v1/projects/project/tasks/1/view',expect.objectContaining({headers:expect.objectContaining({'Idempotency-Key':'key','X-CSRF-Token':'csrf','If-Match':'view-rev'})}))
+})
 it.each(['.','..'])('не отправляет проектные GET и POST для dot segment %s',async(id)=>{
  const fetcher=vi.fn()
  vi.stubGlobal('fetch',fetcher)
