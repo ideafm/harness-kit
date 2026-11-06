@@ -1,5 +1,5 @@
 import { it,expect,vi } from 'vitest'
-import { render,screen,fireEvent } from '@testing-library/react'
+import { render,screen,fireEvent,within } from '@testing-library/react'
 import { TaskPanel } from '@/components/task-table'
 import { TaskCard } from '@/components/task-card'
 import type { Transport } from '@/lib/contracts'
@@ -233,4 +233,48 @@ it('открывает страницу выбранной по URL задачи
  expect(screen.getByRole('tabpanel').textContent).toBe(tasks[6].request)
  expect(document.querySelector('script')).toBeNull()
  window.history.replaceState(null,'','/')
+})
+
+
+it.each(['<script>Лимит исчерпан</script>','',undefined])('показывает ограничение и безопасную причину %s',reason=>{
+ const task={id:17,state:'rate_limited',stage:'implement',updated:1,request:'Запрос',artifacts:[],reason}
+ const view=render(<TaskCard task={task} transport={{get:vi.fn(),post:vi.fn()}} onRefresh={vi.fn()}/>)
+ const notice=screen.getByRole('region',{name:'Ограничение задачи'})
+ expect(within(notice).getByRole('heading',{name:'Ожидает снятия лимита'})).toBeTruthy()
+ expect(within(notice).getByText(reason||'Подробности ограничения не предоставлены.')).toBeTruthy()
+ expect(screen.getByText('Контроллер ожидает снятия ограничения. Срок восстановления не предоставлен.')).toBeTruthy()
+ expect(view.container.querySelector('script')).toBeNull()
+ expect(screen.queryByRole('button',{name:'Продолжить'})).toBeNull()
+})
+
+it('сохраняет вопрос контроллера при ограничении',()=>{
+ render(<TaskCard task={{id:17,state:'rate_limited',stage:'check',updated:1,request:'Запрос',artifacts:[],question:'Уточните режим работы'}} transport={{get:vi.fn(),post:vi.fn()}} onRefresh={vi.fn()}/>)
+ expect(screen.getByText('Уточните режим работы')).toBeTruthy()
+ expect(screen.queryByText('Вопроса к вам нет.')).toBeNull()
+})
+
+it('различает отсутствие полномочий и пустой список действий',()=>{
+ const task={id:18,state:'awaiting_approval',stage:'plan',updated:1,request:'Запрос',artifacts:[]}
+ const props={task,transport:{get:vi.fn(),post:vi.fn()},onRefresh:vi.fn()}
+ const view=render(<TaskCard {...props}/>)
+ let actions=screen.getByRole('region',{name:'Доступные действия'})
+ expect(within(actions).getByText(/Управление недоступно/)).toBeTruthy()
+ expect(within(actions).queryByRole('button')).toBeNull()
+ expect(screen.queryByText('Откройте план и используйте доступные действия.')).toBeNull()
+ view.rerender(<TaskCard {...props} control={{task,revision:'r1',allowed_actions:[],plan:null,result:null,confirmation_urls:{}}}/>)
+ actions=screen.getByRole('region',{name:'Доступные действия'})
+ expect(within(actions).getByText('Сейчас нет доступных действий.')).toBeTruthy()
+ expect(within(actions).queryByRole('button')).toBeNull()
+})
+
+it('показывает только фактически разрешённые действия в одном разделе',()=>{
+ const task={id:19,state:'paused',stage:'implement',updated:1,request:'Запрос',artifacts:[]}
+ const post=vi.fn()
+ render(<TaskCard task={task} control={{task,revision:'r1',allowed_actions:['resume'],plan:null,result:null,confirmation_urls:{}}} session={{csrf_token:'csrf',confirmation_origin:'http://127.0.0.1:47832'}} transport={{get:vi.fn(),post}} onRefresh={vi.fn()}/>)
+ const actions=screen.getByRole('region',{name:'Доступные действия'})
+ expect(within(actions).getAllByRole('button')).toHaveLength(1)
+ expect((within(actions).getByRole('button',{name:'Продолжить'}) as HTMLButtonElement).disabled).toBe(false)
+ expect(screen.queryByRole('button',{name:'Запустить'})).toBeNull()
+ expect(screen.queryByRole('button',{name:'Пауза'})).toBeNull()
+ expect(post).not.toHaveBeenCalled()
 })

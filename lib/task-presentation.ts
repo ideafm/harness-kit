@@ -23,3 +23,11 @@ export function acceptanceLabel(task:PresentedTask){
  return 'Принято, применение не подтверждено'
 }
 
+
+export const progressIcons=['plan','implement','check','review','acceptance']
+export function taskStateIcon(task:PresentedTask){
+ const index=taskProgress(task).index
+ if(index===undefined||task.integration_error?.trim()||task.commit_error?.trim())return 'error'
+ const icons:Record<string,string>={rate_limited:'limit',paused:'pause',failed:'error',blocked:'error',rejected:'error',waiting:'waiting',needs_input:'waiting',needs_permission:'limit',awaiting_approval:'waiting',queued:'waiting',backlog:'waiting',accepted:'check'}
+ return icons[task.state]||progressIcons[index]
+}

@@ -55,12 +55,30 @@ it('предоставляет сведения о каждом этапе с к
  expect(steps[3].getAttribute('data-tip')).toContain('текущий этап')
 })
 
-it('подписывает большой ряд и оставляет компактный ряд точками',()=>{
+it('подписывает большой ряд и показывает текущий этап в компактном',()=>{
  const task={id:7,state:'running',stage:'implement',updated:1,request:'Запрос',artifacts:[]}
  const view=render(<TaskProgress task={task}/> )
  expect(screen.getByText('Разработка')).toBeTruthy()
  expect(screen.getByText('План')).toBeTruthy()
  view.rerender(<TaskProgress task={task} compact/> )
  expect(screen.queryByText('Разработка')).toBeNull()
+ expect(screen.getByText('Текущий этап: Реализация')).toBeTruthy()
  expect(screen.getAllByRole('listitem')).toHaveLength(5)
+})
+
+
+it.each([false,true])('не приписывает прогресс неизвестному этапу, compact=%s',compact=>{
+ const view=render(<TaskProgress compact={compact} task={{id:1,state:'running',stage:'unknown',updated:1,request:'Запрос',artifacts:[]}}/>)
+ expect(screen.getByText('Неизвестное сочетание: unknown / running')).toBeTruthy()
+ expect(view.container.querySelector('[aria-current=step]')).toBeNull()
+ expect(view.container.querySelector('[role=progressbar]')).toBeNull()
+ expect(screen.queryByText(/%/)).toBeNull()
+})
+
+it('оставляет иконки этапов декоративными и сохраняет текстовые описания',()=>{
+ const view=render(<TaskProgress task={{id:1,state:'running',stage:'check',updated:1,request:'Запрос',artifacts:[]}} compact/>)
+ expect(screen.getByText('Текущий этап: Проверки')).toBeTruthy()
+ const icons=view.container.querySelectorAll('svg')
+ expect(icons).toHaveLength(5)
+ for(const icon of icons)expect(icon.getAttribute('aria-hidden')).toBe('true')
 })
