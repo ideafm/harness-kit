@@ -2,7 +2,8 @@ import json
 import unittest
 
 import test_harness as fixtures
-from harness.integration import apply_accepted
+from harness.integration import apply_accepted, deployment_receipt
+from harness.node import source_digest
 from harness.security import git
 from harness.state import atomic_json
 
@@ -84,3 +85,23 @@ class IntegrationTests(unittest.TestCase):
         current = git(self.store.root, 'rev-parse', 'HEAD')
         self.assertEqual(apply_accepted(self.store, 1), record)
         self.assertEqual(git(self.store.root, 'rev-parse', 'HEAD'), current)
+
+    def test_publication_uses_checked_integrated_receipt_without_replacing_original(self):
+        original = self.store.folder(1) / 'frontend-receipt.json'
+        atomic_json(original, {'source_digest': 'original task version'})
+        folder = self.store.folder(1) / 'integrated-build'
+        folder.mkdir()
+        receipt = folder / 'frontend-receipt.json'
+        atomic_json(receipt, {'source_digest': source_digest(self.store.root), 'checks': [{'exit_code': 0}]})
+        self.assertEqual(deployment_receipt(self.store, 1), receipt)
+        self.assertEqual(json.loads(original.read_text())['source_digest'], 'original task version')
+        (self.store.root / 'app.py').write_text('changed after combined checks')
+        with self.assertRaisesRegex(ValueError, 'основной версии'):
+            deployment_receipt(self.store, 1)
+
+    def test_integrated_receipt_cannot_be_a_symlink(self):
+        folder = self.store.folder(1) / 'integrated-build'
+        folder.mkdir()
+        (folder / 'frontend-receipt.json').symlink_to(self.store.root / 'app.py')
+        with self.assertRaisesRegex(ValueError, 'ссылкой'):
+            deployment_receipt(self.store, 1)

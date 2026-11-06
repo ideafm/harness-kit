@@ -18,6 +18,22 @@ def ancestor(root, before, after):
         return False
 
 
+def deployment_receipt(store, ident):
+    folder = store.folder(ident)
+    integrated = folder / 'integrated-build'
+    receipt = integrated / 'frontend-receipt.json'
+    if integrated.is_symlink() or receipt.is_symlink():
+        raise ValueError('Сборка объединённой версии заменена ссылкой')
+    if not receipt.exists():
+        return folder / 'frontend-receipt.json'
+    from .node import source_digest
+    data = json.loads(receipt.read_text())
+    if data.get('source_digest') != source_digest(store.root) or not data.get('checks') or any(
+            check.get('exit_code') != 0 for check in data['checks']):
+        raise ValueError('Объединённая сборка не соответствует проверенной основной версии')
+    return receipt
+
+
 def apply_accepted(store, ident):
     result = commit_accepted(store, ident)
     with lock(store, 'git-results.lock'):
@@ -65,7 +81,7 @@ def apply_accepted(store, ident):
                 newer = store.get(deployed['task'])['data'].get('integration')
                 if newer and newer['commit'] != record['commit'] and ancestor(store.root, record['commit'], newer['commit']):
                     return record
-            receipt = store.folder(ident) / 'frontend-receipt.json'
+            receipt = deployment_receipt(store, ident)
             if receipt.is_symlink():
                 raise ValueError('Receipt сборки заменён ссылкой')
             data = json.loads(receipt.read_text())
