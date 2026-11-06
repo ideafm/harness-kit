@@ -22,7 +22,9 @@ def parser():
     init = sub.add_parser("init", help="Инициализировать проект")
     init.add_argument("--check", required=True, help="Команда проверок без shell-операторов")
     init.add_argument("--model", default="")
+    init.add_argument("--backend", choices=["gemini", "codex"], default="gemini")
     init.add_argument("--codex", default="codex")
+    init.add_argument("--agy", default="agy")
     init.add_argument("--timeout", type=int, default=1800)
     add = sub.add_parser("add", help="Добавить задачу")
     add.add_argument("request")
@@ -122,15 +124,21 @@ def init(args):
         raise ValueError("Нужна команда проверок и положительный timeout")
     if any(token in {";", "&&", "||", "|", ">", "<"} for token in check):
         raise ValueError("check — argv, без shell-операторов; вынесите составную проверку в скрипт")
+    backend = getattr(args, "backend", "gemini")
     codex = shutil.which(args.codex)
-    if not codex:
+    agy = shutil.which(getattr(args, "agy", "agy"))
+    if backend == "codex" and not codex:
         raise ValueError("Codex CLI не найден")
+    if backend == "gemini" and not agy and not Path("/usr/bin/sandbox-exec").is_file() and not codex:
+        raise ValueError("Antigravity CLI (agy) или sandbox-exec не найден")
     executable = shutil.which(check[0])
     if not executable:
         raise ValueError("Исполняемый файл команды check не найден")
     check[0] = str(Path(executable).resolve())
     home.mkdir(mode=0o700)
-    atomic_json(home / "config.json", {"version": 1, "codex": codex, "model": args.model,
+    atomic_json(home / "config.json", {"version": 1, "backend": backend,
+                "codex": codex or args.codex, "agy": agy or getattr(args, "agy", "agy"),
+                "sandbox": "/usr/bin/sandbox-exec", "model": args.model,
                 "check": check, "timeout": args.timeout, "max_attempts": 3,
                 'commit_after_accept': True, 'task_worktrees': True, 'apply_after_accept': True,
                 'integration_branch': git(root, 'symbolic-ref', '--short', 'HEAD').decode().strip()})
@@ -181,7 +189,7 @@ def dispatch_store(args, store):
             print(summary(task))
     elif action == "doctor":
         config = json.loads((store.home / "config.json").read_text())
-        print(doctor(config["codex"]))
+        print(doctor(config if config.get("backend") == "gemini" else config["codex"]))
     elif action == 'watch':
         from .service import TaskService
         from .observation import watch

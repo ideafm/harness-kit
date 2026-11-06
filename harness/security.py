@@ -130,12 +130,54 @@ def permission_args(workspace, writable):
             "-c", 'default_permissions="harness"']
 
 
+def seatbelt_profile(workspace, writable):
+    resolved = str(Path(workspace).resolve())
+    escaped = re.escape(resolved)
+    ancestors = {"/", "/private", "/var", "/private/var", "/tmp", "/private/tmp"}
+    for candidate in (Path(workspace).absolute(), Path(workspace).resolve()):
+        current = candidate
+        while str(current) != current.root:
+            ancestors.add(str(current))
+            current = current.parent
+        ancestors.add(current.root)
+    metadata_rules = " ".join(f"(literal {json.dumps(path)})" for path in sorted(ancestors))
+    system_roots = {"/usr", "/bin", "/sbin", "/System", "/Library", "/Applications",
+                    "/opt/homebrew", "/private/var/select", "/dev",
+                    str(Path(sys.base_prefix).resolve()), str(Path(sys.base_prefix))}
+    read_rules = " ".join(f"(subpath {json.dumps(path)})" for path in sorted(system_roots))
+    write_rule = f"(allow file-write* (subpath {json.dumps(resolved)}))\n" if writable else ""
+    hidden_regex = f"^{escaped}/(.*/)?\\.[^/]+(/.*)?$"
+    secret_regex = f"(?i)^{escaped}/(.*/)?([^/]*\\.env(\\.[^/]+)?|[^/]*\\.(pem|key|p12|pfx)|credentials[^/]*|secret[^/]*|id_(rsa|ed25519|ecdsa)[^/]*)(/.*)?$"
+    return (
+        "(version 1)\n"
+        "(deny default)\n"
+        "(allow process* signal sysctl-read mach-lookup)\n"
+        f"(allow file-read-metadata {metadata_rules})\n"
+        f"(allow file-read* {read_rules} (subpath {json.dumps(resolved)}))\n"
+        "(allow file-write-data (literal \"/dev/null\") (literal \"/dev/tty\"))\n"
+        f"{write_rule}"
+        f"(deny file-read* file-write* (regex #{json.dumps(hidden_regex)}) (regex #{json.dumps(secret_regex)}))\n"
+    )
+
+
+def sandbox_driver(config_or_driver):
+    if isinstance(config_or_driver, dict):
+        if config_or_driver.get("backend") == "gemini" and not config_or_driver.get("codex_sandbox"):
+            return config_or_driver.get("sandbox") or "/usr/bin/sandbox-exec"
+        return config_or_driver.get("codex") or config_or_driver.get("sandbox") or "/usr/bin/sandbox-exec"
+    return config_or_driver or "/usr/bin/sandbox-exec"
+
+
 def sandbox_command(codex, workspace, writable, command):
-    return [codex, "sandbox", *permission_args(workspace, writable), "-P", "harness",
+    driver = sandbox_driver(codex)
+    if Path(str(driver)).name in {"sandbox-exec", "gemini", "agy"}:
+        executable = str(driver) if Path(str(driver)).name == "sandbox-exec" else "/usr/bin/sandbox-exec"
+        return [executable, "-p", seatbelt_profile(workspace, writable), *command]
+    return [str(driver), "sandbox", *permission_args(workspace, writable), "-P", "harness",
             "-C", str(workspace), "--", *command]
 
 
-def doctor(codex):
+def doctor(codex="/usr/bin/sandbox-exec"):
     if sys.platform != "darwin":
         raise RuntimeError("Первая версия разрешена только на macOS; Linux требует отдельной проверки изоляции")
     with tempfile.TemporaryDirectory(prefix="harness-canary-") as temporary:
@@ -188,12 +230,12 @@ print('sandbox canaries passed')
 """
         result = subprocess.run(sandbox_command(codex, workspace, True,
             [str(Path(sys.executable).resolve()), "-c", program, str(workspace), *map(str, forbidden)]),
-            env=safe_env(), capture_output=True, text=True, timeout=30)
+            cwd=str(workspace), env=safe_env(), capture_output=True, text=True, timeout=30)
         if result.returncode:
             raise RuntimeError("Проверка sandbox не прошла:\n" + result.stdout + result.stderr)
         readonly = subprocess.run(sandbox_command(codex, workspace, False,
             [str(Path(sys.executable).resolve()), "-c", "from pathlib import Path; Path('readonly-probe').write_text('x')"]),
-            env=safe_env(), capture_output=True, text=True, timeout=30)
+            cwd=str(workspace), env=safe_env(), capture_output=True, text=True, timeout=30)
         if readonly.returncode == 0 or (workspace / "readonly-probe").exists():
             raise RuntimeError("Проверка read-only sandbox не прошла")
         return result.stdout.strip()

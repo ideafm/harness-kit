@@ -70,11 +70,13 @@ def install(destination=None):
 
 def diagnose(sandbox=False):
     result = {'python': sys.version.split()[0], 'git': shutil.which('git'),
-              'codex': shutil.which('codex'), 'tw': shutil.which('tw'), 'tw-web': shutil.which('tw-web')}
+              'codex': shutil.which('codex'), 'agy': shutil.which('agy'),
+              'tw': shutil.which('tw'), 'tw-web': shutil.which('tw-web')}
     if sandbox:
-        if not result['codex']:
+        driver = result['codex'] or result['agy']
+        if not driver:
             raise ValueError('Codex CLI не найден в PATH')
-        result['sandbox'] = doctor(result['codex'])
+        result['sandbox'] = doctor(driver)
     return result
 
 

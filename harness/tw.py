@@ -25,7 +25,7 @@ def inferred_check(root):
     return None
 
 
-def connect(root, check=None, model=None):
+def connect(root, check=None, model=None, backend=None):
     from .projects import Projects
     root = Projects(KIT).validate(str(Path(root).absolute())).resolve()
     if root == KIT:
@@ -70,9 +70,17 @@ def connect(root, check=None, model=None):
         arguments = ["--project", str(root), "init", "--check", selected]
         if model:
             arguments += ["--model", model]
+        if backend:
+            arguments += ["--backend", backend]
         harness_main(arguments)
     elif check or model:
         raise ValueError("Проект уже подключён; повторный init не меняет check/model")
+    elif backend:
+        current = json.loads(config.read_text())
+        current["backend"] = backend
+        current.setdefault("agy", "agy")
+        current.setdefault("sandbox", "/usr/bin/sandbox-exec")
+        atomic_json(config, current)
     if BLOCK.strip() not in content:
         agents.write_text(content.rstrip() + BLOCK)
     for name, data in files.items():
@@ -111,6 +119,17 @@ def verified_setup_paths(root):
 def chat_command(root, headless=False, prompt=None):
     root = Path(root).resolve()
     config = json.loads((root / ".harness/config.json").read_text())
+    default_prompt = "Работай со skill $tw. Покажи текущий статус через MCP Tw и помоги поставить следующую задачу. Не меняй исходники напрямую."
+    if config.get("backend") == "gemini":
+        agy = config.get("agy") or "agy"
+        command = [agy, "--sandbox"]
+        if config.get("model"):
+            command += ["--model", config["model"]]
+        if headless:
+            command += ["--output-format", "json", "--dangerously-skip-permissions", "-p", prompt or default_prompt]
+        else:
+            command += [prompt or default_prompt]
+        return command
     server = {"command": str(Path(sys.executable).resolve()), "args": [str(KIT / "bin/tw-mcp"), "--project", str(root)],
               "required": True, "default_tools_approval_mode": "auto", "startup_timeout_sec": 20}
     command = [config["codex"], "--no-daemon"]
@@ -126,11 +145,13 @@ def chat_command(root, headless=False, prompt=None):
                 "-c", "shell_environment_policy.experimental_use_profile=false"]
     if config.get("model"):
         command += ["-m", config["model"]]
-    command += [prompt or "Работай со skill $tw. Покажи текущий статус через MCP Tw и помоги поставить следующую задачу. Не меняй исходники напрямую."]
+    command += [prompt or default_prompt]
     return command
 
 
 def verify_servers(command):
+    if Path(command[0]).name == "agy":
+        return
     options = command[1:-1]
     if options and options[0] == "--no-daemon":
         options = options[1:]
@@ -207,25 +228,29 @@ def main(argv=None):
     parser.add_argument("--project", type=Path, default=Path.cwd())
     parser.add_argument("--check")
     parser.add_argument("--model")
+    parser.add_argument("--backend", choices=["gemini", "codex"])
     args = parser.parse_args(arguments)
     try:
         from .projects import Projects
         root = Projects(KIT).validate(str(args.project.absolute())).resolve()
         if args.command == "init":
-            connect(root, args.check, args.model)
+            connect(root, args.check, args.model, args.backend)
             register_project(root)
             return
         if not (root / ".harness/tw.json").is_file():
-            connect(root, args.check, args.model)
+            connect(root, args.check, args.model, args.backend)
         elif args.check or args.model:
             raise ValueError("check/model задаются при первом подключении или tw init")
+        elif args.backend:
+            connect(root, backend=args.backend)
         register_project(root)
         verified_setup_paths(root)
         config = json.loads((root / ".harness/config.json").read_text())
-        doctor(config["codex"])
+        doctor(config if config.get("backend") == "gemini" else config["codex"])
         launch = chat_command(root)
         verify_servers(launch)
-        print("Tw: Codex + skill tw + контроллер. Задачи исполняются внешним worker; исходник в чате только для чтения.", flush=True)
+        engine = "Gemini" if config.get("backend") == "gemini" else "Codex"
+        print(f"Tw: {engine} + skill tw + контроллер. Задачи исполняются внешним worker; исходник в чате только для чтения.", flush=True)
         os.execvpe(launch[0], launch, safe_env())
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, f"tw: {error}\n")

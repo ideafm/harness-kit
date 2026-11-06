@@ -163,11 +163,18 @@ def validate_result(result):
         raise ValueError("Агент запросил остановку без вопроса")
 
 
+def create_backend(config):
+    if config.get("backend") == "gemini" or ("agy" in config and "codex" not in config):
+        from .gemini import Gemini
+        return Gemini(config)
+    return Codex(config)
+
+
 class Runner:
     def __init__(self, store, backend=None, check=None):
         self.store = store
         self.config = json.loads((store.home / "config.json").read_text())
-        self.backend = backend or Codex(self.config)
+        self.backend = backend or create_backend(self.config)
         self.check_override = check
         self.quota = Guard(store, self.config)
 
@@ -354,7 +361,7 @@ class Runner:
                 from .node import check as frontend_check
                 code = frontend_check(workspace, folder, self.config, lambda: self.interrupted(task['id']))
             else:
-                code = execute(sandbox_command(self.config["codex"], workspace, True, self.config["check"]),
+                code = execute(sandbox_command(self.config, workspace, True, self.config["check"]),
                                workspace, folder / "check.log", self.config["timeout"], lambda: self.interrupted(task["id"]))
             if code:
                 data["feedback"] = "Проверки красные.\n" + (folder / "check.log").read_text(errors="replace")[-16000:]
