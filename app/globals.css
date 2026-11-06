@@ -33,3 +33,10 @@ input,select{min-width:0;max-width:100%;border:1px solid #dce3ed;background:whit
 .terminal-command{width:100%;min-height:100px;border:1px solid #c5cfd9;border-radius:7px;padding:10px;font:12px/1.6 ui-monospace,monospace;background:#f5f7fa}
 
 .stage-label{display:block;margin-top:8px;font-size:10px;color:#68778b}[aria-current=step]>.stage-label{color:#3865d9;font-weight:600}
+
+.task-state{display:inline-flex;align-items:center;gap:6px;max-width:100%;overflow-wrap:anywhere}.task-state svg{width:14px;height:14px;flex-shrink:0}
+.limit-notice{padding:16px 18px;border:1px solid #d5aa60;border-left:4px solid #a26912;border-radius:8px;background:#fff8e9;color:#68430d;min-width:0}.limit-notice h3{display:flex;align-items:center;gap:8px}.limit-notice svg{flex-shrink:0}.limit-notice p{white-space:pre-wrap}
+.available-actions{border-top:1px solid #d5deed;padding-top:14px;min-width:0}.available-actions button{white-space:normal;overflow-wrap:anywhere;height:auto;min-height:36px}.task-card>.section-heading{flex-wrap:wrap}
+.task-progress li:before{left:28px;top:14px}.stage-dot{display:grid;place-items:center;width:28px;height:28px;border-radius:8px}.stage-dot svg{width:16px;height:16px}.stage-dot:after{bottom:34px;max-width:220px;white-space:normal;width:max-content;overflow-wrap:anywhere}.task-progress li:last-child .stage-dot:after{left:auto;right:0}
+[aria-current=step]>.stage-dot{background:#eaf0fd;color:#254faa;border-color:#3865d9}.task-progress .current-stage{color:#254faa;font-weight:600;font-size:12px;overflow-wrap:anywhere}.task-progress.compact{max-width:none}.task-progress.compact ol{max-width:190px}.stage-label{overflow-wrap:anywhere;padding-right:4px}
+@media(max-width:767px){.task-context{padding:14px 12px}.stage-label{font-size:9px}.limit-notice{padding:14px 12px}.task-progress li{min-width:0}.task-progress li:nth-last-child(2) .stage-dot:after{left:auto;right:0}}
