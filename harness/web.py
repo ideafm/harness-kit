@@ -126,6 +126,9 @@ class WebApplication:
             try:
                 operator = Operator(service)
                 if method == 'GET':
+                    if parsed.path == '/api/v1/queue':
+                        from .queue_control import QueueControl
+                        return self.json(200, QueueControl(service).get())
                     match = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)/view', parsed.path)
                     if match:
                         from .view_control import ViewControl
@@ -160,6 +163,9 @@ class WebApplication:
                 elif method == 'POST':
                     payload = json.loads(body)
                     key = headers.get('Idempotency-Key')
+                    if parsed.path == '/api/v1/queue':
+                        from .queue_control import QueueControl
+                        return self.json(200, QueueControl(service).perform(payload, key, headers.get('If-Match')))
                     match = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)/view', parsed.path)
                     if match:
                         from .view_control import ViewControl

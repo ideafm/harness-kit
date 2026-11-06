@@ -180,6 +180,8 @@ def main(argv=None):
               "  tw approve-plan TASK-NNN --version SHA256 --confirm TASK-NNN\n"
               "  tw revise-plan TASK-NNN 'замечания'\n"
               "  tw run TASK-NNN / worker       Исполнять без чата\n"
+              "  tw add 'задача' --backlog       Сохранить без автозапуска\n"
+              "  tw enqueue TASK-NNN ... --start Запустить выбранную группу\n"
               "  tw pause / resume TASK-NNN     Управление задачей\n"
               "  tw accept TASK-NNN --confirm TASK-NNN\n"
               "  tw request-changes TASK-NNN 'замечания'\n"

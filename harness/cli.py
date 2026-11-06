@@ -27,6 +27,10 @@ def parser():
     add = sub.add_parser("add", help="Добавить задачу")
     add.add_argument("request")
     add.add_argument("--approval", choices=MODES, default="auto")
+    add.add_argument('--backlog', action='store_true', help='Сохранить без разрешения на выполнение')
+    enqueue = sub.add_parser('enqueue', help='Добавить выбранные задачи в очередь в указанном порядке')
+    enqueue.add_argument('tasks', nargs='+', type=task_id)
+    enqueue.add_argument('--start', action='store_true', help='Также запустить worker')
     sub.add_parser("status", help="Показать задачи и ожидания")
     sub.add_parser("doctor", help="Проверить ограничения на безопасных canary-файлах")
     runtime_profile = sub.add_parser('profile', help='Профиль просмотра проекта')
@@ -159,10 +163,20 @@ def dispatch_store(args, store):
     elif action == "add":
         if not args.request.strip():
             raise ValueError("Пустая задача")
-        print(summary(store.add(args.request, getattr(args, "approval", "auto"))))
+        print(summary(store.add(args.request, getattr(args, "approval", "auto"),
+            'backlog' if getattr(args, 'backlog', False) else 'queue')))
+    elif action == 'enqueue':
+        from .service import TaskService
+        service = TaskService(store.root)
+        try:
+            result = service.enqueue(args.tasks, args.start)
+            for task in result['tasks']:
+                print(f"TASK-{task['id']:03}: {task['state']} · очередь {task['queue_order']}")
+        finally:
+            service.close()
     elif action == "status":
         priority = {"waiting": 0, "awaiting_approval": 0, "blocked": 1, "review": 2, "running": 3, "rate_limited": 4,
-                    "paused": 5, "queued": 6, "accepted": 7, "rejected": 8}
+                    "paused": 5, "queued": 6, "backlog": 7, "accepted": 8, "rejected": 9}
         for task in sorted(store.tasks(), key=lambda t: (priority[t["state"]], t["id"])):
             print(summary(task))
     elif action == "doctor":
@@ -199,9 +213,14 @@ def dispatch_store(args, store):
             while True:
                 if (store.home / "worker.stop").exists():
                     break
-                for task in store.tasks():
+                seen = set()
+                while True:
                     if (store.home / "worker.stop").exists():
                         break
+                    task = next((task for task in store.runnable() if task['id'] not in seen), None)
+                    if task is None:
+                        break
+                    seen.add(task['id'])
                     if task["state"] in {"queued", "running", "rate_limited"}:
                         try:
                             runner.run(task["id"])

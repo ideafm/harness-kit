@@ -38,7 +38,7 @@ class TaskService:
         result = {k: task[k] for k in ("id", "state", "stage", "updated")}
         result['observation'] = descriptor(self.root, task['id'])
         for key in ("request", "question", "question_kind", "reason", "retry_at", "implementation_summary", "review_verdict",
-                    "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error"):
+                    "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order"):
             if key in data:
                 result[key] = data[key]
         if task['state'] != 'rate_limited':
@@ -120,16 +120,26 @@ class TaskService:
                 status = {"running": True, "pid": process.pid}
         return {"task": self.show(ident), "worker": status}
 
-    def submit(self, request, start=True, approval_mode="auto"):
+    def submit(self, request, start=True, approval_mode="auto", placement='queue'):
         if not isinstance(request, str) or not request.strip() or len(request) > 50000:
             raise ValueError("Нужен текст задачи от 1 до 50000 символов")
-        task = self.store.add(request, approval_mode)
-        if start:
+        if type(start) is not bool:
+            raise ValueError('start должен быть логическим значением')
+        task = self.store.add(request, approval_mode, placement)
+        if start and placement == 'queue':
             try:
                 return self.start(task["id"])
             except (OSError, RuntimeError) as error:
                 return {"task": self.view(task), "worker_error": str(error)}
         return {"task": self.view(task), "worker": self.worker_status()}
+
+    def enqueue(self, identifiers, start=False):
+        if type(start) is not bool:
+            raise ValueError('start должен быть логическим значением')
+        tasks = self.store.enqueue(identifiers)
+        if start:
+            self.start(tasks[0]['id'])
+        return {'tasks': [self.show(task['id']) for task in tasks], 'worker': self.worker_status()}
 
     def operate(self, action, ident, text=None):
         if action not in {"pause", "resume", "answer"}:

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
-STATES = {"queued", "running", "waiting", "awaiting_approval", "rate_limited", "paused", "blocked", "review", "accepted", "rejected"}
+STATES = {"backlog", "queued", "running", "waiting", "awaiting_approval", "rate_limited", "paused", "blocked", "review", "accepted", "rejected"}
 
 
 class StateChanged(RuntimeError):
@@ -62,18 +62,46 @@ class Store:
         if (stat.st_dev, stat.st_ino) != self.identity:
             raise RuntimeError("Экземпляр проекта заменён; перезапустите контроллер")
 
-    def add(self, request, approval_mode="auto"):
+    def add(self, request, approval_mode="auto", placement='queue'):
         from .approval import validate_mode
         validate_mode(approval_mode)
+        if placement not in ('queue', 'backlog'):
+            raise ValueError('Нужно выбрать queue или backlog')
         self.ensure_current()
         with self.transaction():
+            data = {"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode}
+            if placement == 'queue':
+                data['queue_order'] = self.next_queue_order()
             row = self.db.execute(
                 "INSERT INTO tasks(state,stage,data,updated) VALUES(?,?,?,?)",
-                ("queued", "plan", json.dumps({"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode}), time.time()),
+                ('backlog' if placement == 'backlog' else 'queued', "plan", json.dumps(data), time.time()),
             )
             ident = row.lastrowid
-            self.event(ident, "created", {"request": request, "approval_mode": approval_mode})
+            self.event(ident, "created", {"request": request, "approval_mode": approval_mode, 'placement': placement})
         return self.get(ident)
+
+    def next_queue_order(self):
+        return max((max(task['id'], task['data'].get('queue_order', 0)) for task in self.tasks()), default=0) + 1
+
+    def runnable(self):
+        return sorted((task for task in self.tasks() if task['state'] in {'queued', 'running', 'rate_limited'}),
+            key=lambda task: (task['state'] != 'running', task['data'].get('queue_order', task['id']), task['id']))
+
+    def enqueue(self, identifiers):
+        if not isinstance(identifiers, list) or not 1 <= len(identifiers) <= 100 or any(type(ident) is not int or ident < 1 for ident in identifiers) or len(set(identifiers)) != len(identifiers):
+            raise ValueError('Нужны от 1 до 100 разных положительных номеров задач')
+        with self.transaction():
+            tasks = [self.get(ident) for ident in identifiers]
+            if any(task['state'] not in {'backlog', 'queued'} for task in tasks):
+                raise ValueError('В очередь можно добавить только backlog или queued')
+            position = self.next_queue_order()
+            for index, task in enumerate(tasks):
+                previous = task['state']
+                task['state'] = 'queued'
+                task['data']['queue_order'] = position + index
+                self.save(task, 'enqueued', {'position': position + index, 'group': identifiers},
+                    expected=previous, expected_updated=task['updated'])
+        return [self.get(ident) for ident in identifiers]
 
     def get(self, ident):
         self.ensure_current()

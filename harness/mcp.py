@@ -20,10 +20,13 @@ TOOLS = [
     tool("tw_artifact", "Спецификация, план, сводка, diff, проверки или ревью задачи",
          {"task": IDENT, "artifact": {"type": "string", "enum": ["specification", "plan", "summary", "diff", "checks", "review"]}},
          ["task", "artifact"], True),
-    tool("tw_submit", "Сохранить задачу; по умолчанию запустить внешним worker",
+    tool("tw_submit", "Сохранить задачу; placement=backlog запрещает автозапуск даже работающим worker, queue — очередь",
          {"request": TEXT, "start": {"type": "boolean"},
+          'placement': {'type': 'string', 'enum': ['queue', 'backlog']},
           "approval": {"type": "string", "enum": ["auto", "approve-plan"]}}, ["request"]),
     tool("tw_start", "Запустить уже поставленную задачу через worker", {"task": IDENT}, ["task"]),
+    tool('tw_enqueue', 'Явно добавить backlog/queued в очередь в заданном порядке; start запускает worker',
+         {'tasks': {'type': 'array', 'items': IDENT, 'minItems': 1, 'maxItems': 100, 'uniqueItems': True}, 'start': {'type': 'boolean'}}, ['tasks', 'start']),
     tool("tw_pause", "Приостановить задачу", {"task": IDENT}, ["task"]),
     tool("tw_resume", "Продолжить приостановленную задачу", {"task": IDENT}, ["task"]),
     tool("tw_answer", "Сохранить ответ на ожидающий вопрос и продолжить; права не меняются",
@@ -49,6 +52,8 @@ def validate(name, arguments):
             raise ValueError("Нужна непустая строка до 50000 символов")
         if "enum" in rule and value not in rule["enum"]:
             raise ValueError("Недопустимый артефакт")
+        if kind == 'array' and (not isinstance(value, list) or not 1 <= len(value) <= 100 or any(type(item) is not int or item < 1 for item in value) or len(set(value)) != len(value)):
+            raise ValueError('Нужны разные положительные номера задач')
 
 
 class Server:
@@ -65,7 +70,10 @@ class Server:
         if name == "tw_artifact":
             return self.service.artifact(arguments["task"], arguments["artifact"])
         if name == "tw_submit":
-            return self.service.submit(arguments["request"], arguments.get("start", True), arguments.get("approval", "auto"))
+            return self.service.submit(arguments["request"], arguments.get("start", True), arguments.get("approval", "auto"),
+                arguments.get('placement', 'queue'))
+        if name == 'tw_enqueue':
+            return self.service.enqueue(arguments['tasks'], arguments['start'])
         if name == "tw_start":
             return self.service.start(arguments["task"])
         return self.service.operate(name.removeprefix("tw_"), arguments["task"], arguments.get("text"))

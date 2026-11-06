@@ -178,7 +178,7 @@ class Preview:
                 status, content_type, body = app.dispatch('GET', path, {'Host': f'127.0.0.1:{PORT}'})
                 if status == 200:
                     envelope = json.loads(body)
-                    envelope['data'].update(actions=[], apply=False, project_view=False, stream=False)
+                    envelope['data'].update(actions=[], apply=False, project_view=False, stream=False, queue=False)
                     body = json.dumps(envelope, ensure_ascii=False).encode()
                 return status, content_type, body
             if not re.fullmatch(r'/api/v1/(?:projects|(?:projects/[a-f0-9]{16}/)?(?:status|tasks/[1-9][0-9]*(?:/(?:control|events|artifacts/[a-z]+))?))', parsed.path):

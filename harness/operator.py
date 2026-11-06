@@ -64,7 +64,8 @@ class Operator:
     def capabilities(self):
         return {'project_id': digest(str(self.service.root))[:16], 'operator_api_version': '1',
                 'actions': sorted(ACTIONS | {'submit', 'create_task'}), 'events': True, 'apply': False,
-                'human_confirmation': 'separate-origin', 'embedded_confirmation': True, 'project_view': True, 'stream': True}
+                'human_confirmation': 'separate-origin', 'embedded_confirmation': True,
+                'project_view': True, 'stream': True, 'queue': True}
 
     def events(self, ident, after=0, limit=100):
         self.store.get(ident)
@@ -127,6 +128,10 @@ class Operator:
                 'accept_result': {'action', 'result_version', 'result_digest'},
                 'request_changes': {'action', 'result_version', 'result_digest', 'feedback'},
                 'reject_result': {'action', 'result_version', 'result_digest', 'reason'}}[action]
+        if action == 'submit' and 'placement' in payload:
+            keys = keys | {'placement'}
+            if payload['placement'] not in ('queue', 'backlog'):
+                raise OperatorError('invalid_request', 'Нужно выбрать queue или backlog')
         if set(payload) != keys:
             raise OperatorError('invalid_request', 'Некорректные поля действия')
         for field in ('request', 'text', 'feedback', 'reason'):
@@ -138,7 +143,8 @@ class Operator:
 
     def dispatch(self, action, ident, payload):
         if action == 'submit':
-            return self.service.submit(payload['request'], approval_mode=payload['approval_mode'])['task']['id']
+            return self.service.submit(payload['request'], approval_mode=payload['approval_mode'],
+                placement=payload.get('placement', 'queue'))['task']['id']
         control = self.control(ident)
         if action == 'answer' and payload['question_id'] != control['pending_question_id']:
             raise OperatorError('stale_question', 'Вопрос изменился', 409)
