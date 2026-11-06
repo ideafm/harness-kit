@@ -15,7 +15,7 @@ import uuid
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .node import source_digest
 from .operator import OperatorError
@@ -131,7 +131,7 @@ class ProjectView:
             raise ValueError('Некорректный выбор просмотра')
         return value
 
-    def select(self, ident, mode='checked', refresh=False):
+    def select(self, ident, mode='checked', refresh=False, expected=None, selection_revision=None):
         if type(ident) is not int or ident < 1 or mode not in {'working', 'checked'}:
             raise ValueError('Нужны номер задачи и режим working/checked')
         service = TaskService(self.root)
@@ -148,12 +148,22 @@ class ProjectView:
         finally:
             service.close()
         with self.lock('selection.lock', True):
+            if expected is not None and self.control_revision(ident) != expected:
+                raise OperatorError('stale_revision', 'Просмотр или задача изменились. Обновите карточку', 409)
             previous = self.selection()
             if previous and previous['task'] == ident and previous['mode'] == mode and not refresh:
                 return previous
-            selection = {'project_id': self.ident, 'task': ident, 'mode': mode, 'revision': uuid.uuid4().hex}
+            selection = {'project_id': self.ident, 'task': ident, 'mode': mode, 'revision': selection_revision or uuid.uuid4().hex}
             self.write('selection.json', selection)
             return selection
+
+    def control_revision(self, ident):
+        service = TaskService(self.root)
+        try:
+            value = [service.store.get(ident), profile(service.store), self.selection()]
+        finally:
+            service.close()
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     def request(self, record, stop=False):
         if not isinstance(record, dict) or record.get('project_id') != self.ident or record.get('port') != self.port:
@@ -386,12 +396,17 @@ class ProjectView:
             return 403, 'text/plain', b'Forbidden origin'
         if method != 'GET':
             return 403, 'text/plain', b'Project view is read-only'
+        query = parse_qs(urlsplit(path).query, keep_blank_values=True)
+        pinned = {'__tw_task', '__tw_version'} & set(query)
+        with self.guard:
+            preview = self.preview
+            matches = not pinned or (pinned == {'__tw_task', '__tw_version'} and query['__tw_task'] == [str(self.state['active_task'])] and query['__tw_version'] == [self.state.get('source_digest')])
+        if not matches:
+            return 409, 'text/html; charset=utf-8', '<html lang="ru"><meta charset="utf-8"><h1>Эта версия сейчас не открыта</h1><p>Вернитесь в панель Tw и выберите результат нужной задачи.</p></html>'.encode()
         if urlsplit(path).path == '/__view/status':
             with self.guard:
                 body = dict(self.state, requested=self.selection())
             return 200, 'application/json', json.dumps(body, ensure_ascii=False).encode()
-        with self.guard:
-            preview = self.preview
         if preview is None:
             return 503, 'text/html', b'<html>Preparing project view<meta http-equiv="refresh" content="2"></html>'
         status, content_type, body = preview.dispatch(method, path, headers)

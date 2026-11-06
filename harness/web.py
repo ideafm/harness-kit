@@ -100,6 +100,10 @@ class WebApplication:
             try:
                 operator = Operator(service)
                 if method == 'GET':
+                    match = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)/view', parsed.path)
+                    if match:
+                        from .view_control import ViewControl
+                        return self.json(200, ViewControl(service).get(int(match[1])))
                     if parsed.path == '/api/v1/capabilities':
                         return self.json(200, operator.capabilities())
                     if parsed.path == '/api/v1/status':
@@ -130,6 +134,11 @@ class WebApplication:
                 elif method == 'POST':
                     payload = json.loads(body)
                     key = headers.get('Idempotency-Key')
+                    match = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)/view', parsed.path)
+                    if match:
+                        from .view_control import ViewControl
+                        result = ViewControl(service).perform(int(match[1]), payload, key, headers.get('If-Match'))
+                        return self.json(200, result)
                     if parsed.path == '/api/v1/tasks':
                         result = operator.perform(None, payload, key)
                         if result['status'] == 'failed':

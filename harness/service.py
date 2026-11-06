@@ -54,6 +54,11 @@ class TaskService:
             port = preview.get('port')
             if type(port) is int and 1024 <= port <= 65535 and preview.get('task') == task['id']:
                 result['preview'] = {'url': f'http://127.0.0.1:{port}', 'read_only': True}
+        if task['state'] != 'rejected':
+            from .view_control import preview_descriptor
+            persistent = preview_descriptor(self.root, task['id'])
+            if persistent:
+                result['preview'] = persistent
         return result
 
     def status(self):

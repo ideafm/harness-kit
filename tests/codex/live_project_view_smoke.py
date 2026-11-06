@@ -3,6 +3,7 @@ import socket
 import sys
 import time
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -10,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import test_harness as fixtures
 from harness.project_view import ProjectView, configure
 from harness.security import git
+from harness.service import TaskService
+from harness.view_control import ViewControl
 
 
 def main():
@@ -47,12 +50,31 @@ def main():
                         return status
                 time.sleep(.1)
             raise RuntimeError('View did not publish requested task')
-        view.select(first, 'checked')
-        view.start()
+        service = TaskService(store.root)
+        try:
+            control = ViewControl(service)
+            revision = control.get(first)['revision']
+            operation = control.perform(first, {'action': 'select', 'mode': 'checked'}, 'live-view-first-key', revision)
+            assert operation['status'] == 'succeeded', operation
+        finally:
+            service.close()
         wait_for(first, 'first task')
+        service = TaskService(store.root)
+        try:
+            pinned = service.show(first)['preview']['url']
+        finally:
+            service.close()
+        with opener.open(pinned) as response:
+            assert b'first task' in response.read()
         address = view.url
         view.select(second, 'checked')
         wait_for(second, 'second task')
+        try:
+            opener.open(pinned)
+        except urllib.error.HTTPError as error:
+            assert error.code == 409
+        else:
+            raise AssertionError('Old task link showed the new task')
         assert view.url == address
         (store.folder(second) / 'workspace/index.html').write_text('<html>unverified working edit</html>')
         with opener.open(view.url) as response:

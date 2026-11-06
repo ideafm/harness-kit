@@ -6,6 +6,9 @@ import test_harness as fixtures
 from harness.project_view import ProjectView, configure, profile
 from harness.operator import OperatorError
 from harness.security import git
+from harness.view_control import ViewControl, preview_descriptor
+from harness.service import TaskService
+from harness.web import WebApplication, PORT
 
 
 class ProjectViewTests(unittest.TestCase):
@@ -175,6 +178,93 @@ class ProjectViewTests(unittest.TestCase):
         self.store.save(task, 'rejected')
         with self.assertRaisesRegex(ValueError, 'отклонена'):
             ProjectView(self.store.root).restore()
+
+    def test_pinned_link_rejects_another_task_and_old_version(self):
+        self.view.select(1, 'checked')
+        self.view.refresh()
+        path = '/?__tw_task=1&__tw_version=' + self.view.state['source_digest']
+        self.assertEqual(self.view.dispatch('GET', path, self.headers)[0], 200)
+        self.assertEqual(self.view.dispatch('GET', path.replace('__tw_task=1', '__tw_task=2'), self.headers)[0], 409)
+        self.assertEqual(self.view.dispatch('GET', '/?__tw_task=1', self.headers)[0], 409)
+        self.view.select(1, 'working')
+        (self.store.folder(1) / 'workspace/index.html').write_text('<html>changed</html>')
+        self.view.refresh()
+        self.assertEqual(self.view.dispatch('GET', path, self.headers)[0], 409)
+
+    def test_view_operation_is_idempotent_and_cannot_restore_old_selection(self):
+        service = TaskService(self.store.root)
+        self.addCleanup(service.close)
+        operator = ViewControl(service)
+        revision = operator.get(1)['revision']
+        payload = {'action': 'select', 'mode': 'checked'}
+        with patch.object(ProjectView, 'start', return_value={'running': True}) as start:
+            result = operator.perform(1, payload, 'view-operation-key', revision)
+            self.assertEqual(result['status'], 'succeeded')
+            selection = self.view.select(1, 'working')
+            repeated = operator.perform(1, payload, 'view-operation-key', revision)
+            self.assertEqual(result, repeated)
+            start.assert_called_once()
+        self.assertEqual(self.view.selection(), selection)
+        with self.assertRaises(OperatorError) as stale:
+            operator.perform(1, payload, 'new-view-operation', revision)
+        self.assertEqual(stale.exception.status, 409)
+        with self.assertRaises(OperatorError) as conflict:
+            operator.perform(1, dict(payload, mode='working'), 'view-operation-key', revision)
+        self.assertEqual(conflict.exception.status, 409)
+
+    def test_interrupted_view_operation_resumes_without_reselecting(self):
+        service = TaskService(self.store.root)
+        self.addCleanup(service.close)
+        operator = ViewControl(service)
+        revision = operator.get(1)['revision']
+        payload = {'action': 'select', 'mode': 'checked'}
+        with patch.object(ProjectView, 'start', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                operator.perform(1, payload, 'interrupted-view-key', revision)
+        selected = self.view.selection()
+        with patch.object(ProjectView, 'start', return_value={'running': True}):
+            result = operator.perform(1, payload, 'interrupted-view-key', revision)
+        self.assertEqual(result['status'], 'succeeded')
+        self.assertEqual(self.view.selection(), selected)
+
+    def test_interrupted_operation_does_not_replace_a_newer_choice(self):
+        service = TaskService(self.store.root)
+        self.addCleanup(service.close)
+        operator = ViewControl(service)
+        revision = operator.get(1)['revision']
+        payload = {'action': 'select', 'mode': 'checked'}
+        with patch.object(ProjectView, 'start', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                operator.perform(1, payload, 'superseded-view-key', revision)
+        selected = self.view.select(1, 'working')
+        with patch.object(ProjectView, 'start') as start:
+            result = operator.perform(1, payload, 'superseded-view-key', revision)
+            start.assert_not_called()
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['error']['code'], 'stale_revision')
+        self.assertEqual(self.view.selection(), selected)
+
+    def test_view_api_enforces_origin_csrf_and_preconditions(self):
+        self.view.select(1, 'checked')
+        self.view.refresh()
+        app = WebApplication(self.store.root, 'test', self.view.preview.app.assets,
+            self.view.preview.app.receipt)
+        headers = {'Host': f'127.0.0.1:{PORT}'}
+        path = '/api/v1/tasks/1/view'
+        status, _, body = app.dispatch('GET', path, headers)
+        self.assertEqual(status, 200)
+        revision = json.loads(body)['data']['revision']
+        payload = json.dumps({'action': 'select', 'mode': 'checked'}).encode()
+        self.assertEqual(app.dispatch('POST', path, headers, payload)[0], 403)
+        headers.update(Origin=f'http://127.0.0.1:{PORT}', **{'X-CSRF-Token': app.csrf,
+            'Content-Type': 'application/json', 'Idempotency-Key': 'api-view-key-123', 'If-Match': revision})
+        with patch.object(ProjectView, 'start', return_value={'running': True}):
+            self.assertEqual(app.dispatch('POST', path, headers, payload)[0], 200)
+        headers['If-Match'] = revision
+        headers['Idempotency-Key'] = 'api-view-key-new'
+        self.assertEqual(app.dispatch('POST', path, headers, payload)[0], 409)
+        self.assertEqual(self.view.dispatch('POST', path, self.headers)[0], 403)
+        self.assertIsNone(preview_descriptor(self.store.root, 1))
 
     def test_unknown_adapter_missing_proof_and_symlink_fail_closed(self):
         with self.assertRaises(ValueError):
