@@ -67,6 +67,24 @@ def main():
         assert restarted['message'] != 'Просмотр остановлен'
         wait_for(second, 'unverified working edit')
         view.stop()
+        (store.folder(second) / 'workspace/index.html').unlink()
+        view.select(first, 'working')
+        (store.folder(first) / 'workspace/index.html').unlink()
+        view.start()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            with opener.open(view.url + '/__view/status', timeout=2) as response:
+                state = json.load(response)
+            if state.get('error'):
+                assert state['active_task'] == second and not state['current']
+                assert state['requested']['task'] == first
+                with opener.open(view.url, timeout=2) as response:
+                    assert b'unverified working edit' in response.read()
+                break
+            time.sleep(.1)
+        else:
+            raise AssertionError('Restart did not preserve last-good after failed new selection')
+        view.stop()
         with socket.socket() as foreign:
             foreign.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             foreign.bind(('127.0.0.1', view.port))
@@ -79,7 +97,7 @@ def main():
                 raise AssertionError('Port collision was not rejected')
             assert foreign.getsockname()[1] == view.port
         print(json.dumps({'result': 'passed', 'url': address, 'tasks': [first, second],
-            'checks': ['switch checked task', 'working vs checked', 'restart', 'stop ownership', 'port collision'],
+            'checks': ['switch checked task', 'working vs checked', 'restart', 'failed selection restart', 'stop ownership', 'port collision'],
             'model_calls': 0}))
     finally:
         if view is not None:

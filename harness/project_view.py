@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .node import source_digest
+from .operator import OperatorError
 from .preview import Preview, RELOAD
 from .projects import project_id
 from .security import safe_env
@@ -246,6 +247,73 @@ class ProjectView:
         preview.publish(receipt)
         return preview
 
+    def remember(self, candidate, selection, settings):
+        receipt = self.read_receipt(Path(candidate.app.receipt))
+        name = 'published-' + uuid.uuid4().hex + '.json'
+        self.write(name, receipt)
+        self.write('last-good.json', {'project_id': self.ident, 'selection': selection,
+            'settings': settings, 'receipt': name,
+            'digest': hashlib.sha256((self.home / name).read_bytes()).hexdigest()})
+
+    def read_receipt(self, path):
+        if not path.is_absolute() or '..' in path.parts:
+            raise ValueError('Некорректный путь receipt')
+        home = self.root / '.harness'
+        if not path.is_relative_to(home) or any(parent.is_symlink()
+                for parent in (path, *path.parents) if parent.is_relative_to(home)):
+            raise ValueError('Receipt вне состояния контроллера или заменён ссылкой')
+        return json.loads(path.read_text())
+
+    def restore(self):
+        record = self.read('last-good.json')
+        if record is None:
+            return
+        selection, settings = record['selection'], record['settings']
+        if record.get('project_id') != self.ident or selection.get('project_id') != self.ident:
+            raise ValueError('Неверный владелец сохранённого просмотра')
+        if type(selection.get('task')) is not int or selection['task'] < 1 or selection.get('mode') not in {'checked', 'working'}:
+            raise ValueError('Некорректная сохранённая задача')
+        if not re.fullmatch(r'[a-f0-9]{32}', selection.get('revision', '')) or settings not in (
+                {'version': 1, 'adapter': 'static'}, {'version': 1, 'adapter': 'next-ui'}):
+            raise ValueError('Некорректный сохранённый профиль')
+        name = record['receipt']
+        if not isinstance(name, str) or not re.fullmatch(r'published-[a-f0-9]{32}\.json', name):
+            raise ValueError('Некорректный сохранённый receipt')
+        path = self.home / name
+        data = self.read_receipt(path)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != record.get('digest'):
+            raise ValueError('Сохранённый receipt изменился')
+        preview = Preview(self.root, selection['task'], snapshot=True)
+        preview.port = self.port
+        if preview.rejected() or preview.runtime != settings['adapter']:
+            raise ValueError('Сохранённая задача отклонена или профиль изменён')
+        export = Path(data['export'])
+        allowed = export.is_relative_to(preview.folder) and not export.is_relative_to(preview.workspace)
+        if export.is_relative_to(self.home):
+            parts = export.relative_to(self.home).parts
+            allowed = len(parts) >= 2 and bool(re.fullmatch(r'build-[a-f0-9]{32}', parts[0]))
+        if not allowed or not export.is_absolute() or '..' in export.parts or any(parent.is_symlink()
+                for parent in (export, *export.parents) if parent.is_relative_to(self.root / '.harness')):
+            raise ValueError('Сохранённый экспорт вне состояния просмотра или заменён ссылкой')
+        if not re.fullmatch(r'[a-f0-9]{64}', data.get('source_digest', '')):
+            raise ValueError('Некорректная версия сохранённого экспорта')
+        if selection['mode'] == 'checked':
+            if settings['adapter'] == 'static':
+                proof = data.get('check_receipt', {})
+                if data.get('task') != selection['task'] or proof.get('exit_code') != 0 or proof.get('source_digest') != data['source_digest']:
+                    raise ValueError('Нет доказательства проверок сохранённого экспорта')
+            elif not data.get('checks') or any(check.get('exit_code') != 0 for check in data['checks']):
+                raise ValueError('Нет доказательства проверок сохранённого Next экспорта')
+        preview.publish(path, verify_workspace=False)
+        for asset in preview.app.manifest:
+            preview.app.static('/' + asset)
+        with self.guard:
+            self.preview = preview
+            self.state.update(active_task=selection['task'], mode=selection['mode'],
+                revision=selection['revision'] + ':' + data['source_digest'],
+                source_digest=data['source_digest'], current=False, workspace_current=False,
+                message=f"Восстановлена TASK-{selection['task']:03} · текущий выбор ещё не проверен")
+
     def refresh(self):
         selection = self.selection()
         if selection is None:
@@ -265,9 +333,11 @@ class ProjectView:
                     return
             finally:
                 service.close()
+            self.remember(candidate, selection, settings)
             with self.guard:
                 self.preview = candidate
                 self.state.pop('error', None)
+                self.state.pop('restore_error', None)
                 self.state.update(active_task=selection['task'], mode=selection['mode'],
                     revision=selection['revision'] + ':' + candidate.state['revision'],
                     current=selection['mode'] == 'checked' or candidate.state['current'], workspace_current=candidate.state['current'],
@@ -365,6 +435,10 @@ class ProjectView:
                 def log_message(self, *_):
                     pass
             server = ThreadingHTTPServer(('127.0.0.1', self.port), Handler)
+            try:
+                self.restore()
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError, OperatorError) as error:
+                self.state['restore_error'] = str(error)[:1000]
             self.state.update(building=True, requested=self.selection(), message='Подготовка выбранной версии')
             self.write('status.json', self.state)
             thread = threading.Thread(target=self.build_loop, daemon=True)

@@ -25,7 +25,7 @@ RELOAD = b'''<aside id="tw-preview" style="position:fixed;bottom:8px;right:8px;z
 
 
 class Preview:
-    def __init__(self, root, ident):
+    def __init__(self, root, ident, snapshot=False):
         self.root = Path(root).resolve()
         self.ident = ident
         self.port = 48000 + (int(project_id(self.root), 16) + ident) % 15000
@@ -40,7 +40,7 @@ class Preview:
                 raise ValueError('Недопустимая рабочая копия')
             self.runtime = task['data'].get('frontend_toolchain')
             if self.runtime != 'next-ui':
-                if not (self.workspace / 'index.html').is_file() or (self.workspace / 'index.html').is_symlink():
+                if not snapshot and (not (self.workspace / 'index.html').is_file() or (self.workspace / 'index.html').is_symlink()):
                     raise ValueError('Для проекта ещё не подготовлен поддерживаемый preview runtime')
                 self.runtime = 'static'
             self.config = json.loads((service.store.home / 'config.json').read_text())
@@ -64,7 +64,7 @@ class Preview:
         self.state = {'task': ident, 'project_id': project_id(self.root), 'revision': None, 'building': False, 'message': 'Подготовка preview'}
         self.app = None
 
-    def publish(self, receipt):
+    def publish(self, receipt, verify_workspace=True):
         from .node import source_digest
         data = json.loads(receipt.read_text())
         app = WebApplication(self.root, 'preview', data['export'], receipt)
@@ -73,7 +73,7 @@ class Preview:
             self.app = app
             self.state.update(revision=data['source_digest'], building=False,
                 message=f'TASK-{self.ident:03} · предпросмотр · изменения до приёмки',
-                current=data['source_digest'] == source_digest(self.workspace))
+                current=verify_workspace and data['source_digest'] == source_digest(self.workspace))
 
     def rejected(self):
         service = TaskService(self.root)

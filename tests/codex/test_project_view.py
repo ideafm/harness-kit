@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import test_harness as fixtures
 from harness.project_view import ProjectView, configure, profile
+from harness.operator import OperatorError
 from harness.security import git
 
 
@@ -106,6 +107,74 @@ class ProjectViewTests(unittest.TestCase):
         restarted.refresh()
         self.assertEqual(restarted.state['active_task'], 1)
         self.assertEqual(profile(self.store)['adapter'], 'static')
+
+    def test_restart_restores_published_snapshot_when_new_selection_is_broken(self):
+        self.view.select(1, 'checked')
+        self.view.refresh()
+        original_revision = self.view.state['revision']
+        self.view.select(1, 'working')
+        (self.store.folder(1) / 'workspace/index.html').unlink()
+        (self.store.folder(1) / 'runtime-receipt.json').unlink()
+        restarted = ProjectView(self.store.root)
+        restarted.restore()
+        self.assertIn(b'first', restarted.dispatch('GET', '/', self.headers)[2])
+        self.assertEqual(restarted.state['revision'], original_revision)
+        self.assertEqual(restarted.selection()['mode'], 'working')
+        self.assertFalse(restarted.state['current'])
+        with patch.object(restarted.stop_event, 'wait', side_effect=[False, True]):
+            restarted.build_loop()
+        self.assertIn('error', restarted.state)
+        self.assertIn(b'first', restarted.dispatch('GET', '/', self.headers)[2])
+
+    def test_restart_restores_working_export_without_its_source(self):
+        self.view.select(1, 'working')
+        self.view.refresh()
+        (self.store.folder(1) / 'workspace/index.html').unlink()
+        restarted = ProjectView(self.store.root)
+        restarted.restore()
+        self.assertEqual(restarted.state['mode'], 'working')
+        self.assertFalse(restarted.state['current'])
+        self.assertIn(b'first', restarted.dispatch('GET', '/', self.headers)[2])
+
+    def test_restore_rejects_tampered_receipt_and_foreign_project(self):
+        self.view.select(1, 'checked')
+        self.view.refresh()
+        record = self.view.read('last-good.json')
+        path = self.view.home / record['receipt']
+        original = path.read_bytes()
+        path.write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'receipt изменился'):
+            ProjectView(self.store.root).restore()
+        path.write_bytes(original)
+        record['project_id'] = 'foreign'
+        self.view.write('last-good.json', record)
+        with self.assertRaisesRegex(ValueError, 'владелец'):
+            ProjectView(self.store.root).restore()
+
+    def test_restore_rejects_export_symlink_or_changed_asset(self):
+        self.view.select(1, 'checked')
+        self.view.refresh()
+        export = self.view.preview.app.assets
+        asset = export / 'index.html'
+        original = asset.read_bytes()
+        asset.write_text('tampered')
+        with self.assertRaises(OperatorError):
+            ProjectView(self.store.root).restore()
+        asset.write_bytes(original)
+        moved = export.with_name('moved-export')
+        export.rename(moved)
+        export.symlink_to(moved, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'экспорт'):
+            ProjectView(self.store.root).restore()
+
+    def test_restore_rejects_rejected_task(self):
+        self.view.select(1, 'checked')
+        self.view.refresh()
+        task = self.store.get(1)
+        task['state'] = 'rejected'
+        self.store.save(task, 'rejected')
+        with self.assertRaisesRegex(ValueError, 'отклонена'):
+            ProjectView(self.store.root).restore()
 
     def test_unknown_adapter_missing_proof_and_symlink_fail_closed(self):
         with self.assertRaises(ValueError):
