@@ -6,6 +6,7 @@ import json
 import mimetypes
 import re
 import secrets
+import sqlite3
 import threading
 import time
 import uuid
@@ -38,6 +39,31 @@ class WebApplication:
         self.guard = threading.Lock()
         self.projects = Projects(self.root)
         self.project_csrf = secrets.token_hex(32)
+        self.stream_slots = threading.BoundedSemaphore(16)
+        self.stream_stop = threading.Event()
+
+    def open_stream(self, path, headers):
+        if headers.get('Host') != f'127.0.0.1:{PORT}' or headers.get('Origin') not in (None, f'http://127.0.0.1:{PORT}'):
+            raise OperatorError('forbidden_origin', 'Недопустимый адрес запроса', 403)
+        parsed = urlsplit(path)
+        match = re.fullmatch(r'/api/v1/(?:projects/([a-f0-9]{16})/)?stream', parsed.path)
+        if not match or parsed.query:
+            raise OperatorError('invalid_request', 'Некорректный адрес потока')
+        cursor = headers.get('Last-Event-ID')
+        if cursor is not None and not re.fullmatch(r'[a-f0-9]{32}:[1-9][0-9]{0,18}', cursor):
+            raise OperatorError('invalid_cursor', 'Некорректный курсор потока')
+        try:
+            root = self.projects.resolve(match[1]) if match[1] else self.root
+        except KeyError:
+            raise OperatorError('not_found', 'Проект не подключён', 404) from None
+        if self.stream_stop.is_set() or not self.stream_slots.acquire(blocking=False):
+            raise OperatorError('stream_capacity', 'Поток временно недоступен', 503)
+        try:
+            from .live_updates import ChangeStream
+            return ChangeStream(root, self.stream_slots.release)
+        except BaseException:
+            self.stream_slots.release()
+            raise
 
     def confirmation_urls(self, control, root=None):
         return {action: f'http://127.0.0.1:{CONFIRM_PORT}/confirm?' + urlencode({
@@ -333,7 +359,7 @@ def servers(application):
     class Handler(BaseHTTPRequestHandler):
         def dispatch(self):
             try:
-                for name in ('Host', 'Origin', 'Content-Type', 'Content-Length', 'Idempotency-Key', 'If-Match', 'X-CSRF-Token', 'X-Tw-Instance'):
+                for name in ('Host', 'Origin', 'Content-Type', 'Content-Length', 'Idempotency-Key', 'If-Match', 'X-CSRF-Token', 'X-Tw-Instance', 'Last-Event-ID'):
                     if len(self.headers.get_all(name, [])) > 1:
                         raise ValueError()
                 size = int(self.headers.get('Content-Length', '0'))
@@ -341,6 +367,35 @@ def servers(application):
                     raise ValueError()
             except ValueError:
                 self.send_error(400)
+                return
+            if self.command == 'GET' and self.server.server_port != CONFIRM_PORT and re.fullmatch(
+                    r'/api/v1/(?:projects/[a-f0-9]{16}/)?stream', urlsplit(self.path).path):
+                if size:
+                    self.send_error(400)
+                    return
+                try:
+                    stream = application.open_stream(self.path, self.headers)
+                except OperatorError as error:
+                    self.send_error(error.status, explain=str(error))
+                    return
+                except (OSError, ValueError, RuntimeError, sqlite3.Error):
+                    self.send_error(503)
+                    return
+                try:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-cache, no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.send_header('X-Accel-Buffering', 'no')
+                    self.end_headers()
+                    for frame in stream.frames(application.stream_stop):
+                        self.wfile.write(frame)
+                        self.wfile.flush()
+                except (OSError, ValueError, RuntimeError, sqlite3.Error):
+                    pass
+                finally:
+                    stream.close()
+                    self.close_connection = True
                 return
             status, content_type, data = application.dispatch(self.command, self.path, self.headers, self.rfile.read(size), self.server.server_port == CONFIRM_PORT)
             self.send_response(status)
@@ -381,6 +436,7 @@ def servers(application):
         first.server_close()
         raise
     def shutdown():
+        application.stream_stop.set()
         first.shutdown()
         second.shutdown()
     first.shutdown_all = second.shutdown_all = shutdown
