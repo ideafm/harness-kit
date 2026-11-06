@@ -13,6 +13,7 @@ def decide(store, ident, action, text, confirmation=None):
               "previous_attempts": dict(data["attempts"])}
     if action == "request-changes":
         data["feedback"] = "Замечания пользователя:\n" + text
+        data['result_feedback'] = text
         data["attempts"] = {**data["attempts"], "implement": 0, "check": 0, "review": 0}
         data.pop("review_verdict", None)
         data.pop("implementation_summary", None)

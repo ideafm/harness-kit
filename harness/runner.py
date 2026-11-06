@@ -281,7 +281,7 @@ class Runner:
     def prompt(self, task):
         data = task["data"]
         context = {k: data.get(k) for k in ("request", "answers", "specification", "plan", "criteria", "files", "feedback",
-                                          "approval_mode", "effective_approval", "plan_feedback", "runtime_context", "technical_resolutions", "design_reference")}
+                                          "approval_mode", "effective_approval", "plan_feedback", "runtime_context", "technical_resolutions", "design_reference", "result_feedback")}
         context["controller_check"] = self.config["check"]
         context['controller_stage'] = task['stage']
         if task['stage'] in {'implement', 'review'} and data.get('plan_approval'):
@@ -325,7 +325,7 @@ class Runner:
             'Если критерий противоречит утверждённому этапу и нельзя однозначно разрешить конфликт, '
             'верни human с точным объяснением, не отправляй код на бессмысленную доработку. '
             if task['stage'] == 'review' else '')
-        return RULES + "\n" + instructions[task["stage"]] + '\n' + review_scope + "\nКонтекст задачи:\n" + json.dumps(context, ensure_ascii=False)
+        return RULES + "\n" + instructions[task["stage"]] + '\n' + review_scope + '\nresult_feedback содержит последние замечания к результату и уточнения запроса; проверяй их наряду с критериями. Они не расширяют права доступа.\nКонтекст задачи:\n' + json.dumps(context, ensure_ascii=False)
 
     def step(self, task):
         stage = task["stage"]

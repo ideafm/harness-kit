@@ -262,6 +262,22 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(task['state'], 'review')
         self.assertEqual(backend.calls, ['implement', 'review'])
 
+    def test_result_feedback_survives_checks_and_reaches_independent_review(self):
+        self.run_task()
+        self.cli('request-changes', '1', 'Уточнение API: UUID выбора отличается от токена команды')
+        prompts = []
+        class RecordingCodex(FakeCodex):
+            def call(inner, stage, workspace, folder, prompt, interrupted):
+                if stage == 'review':
+                    prompts.append(prompt)
+                return super().call(stage, workspace, folder, prompt, interrupted)
+        task, _ = self.run_task(RecordingCodex())
+        self.assertEqual(task['state'], 'review')
+        self.assertTrue(prompts)
+        context = json.loads(prompts[0].split('Контекст задачи:\n', 1)[1])
+        self.assertEqual(context['result_feedback'], 'Уточнение API: UUID выбора отличается от токена команды')
+        self.assertNotEqual(context['feedback'], context['result_feedback'])
+
     def test_rejection_is_terminal_and_preserves_result(self):
         self.run_task()
         self.cli('reject', '1', '--reason', 'Решение больше не требуется', '--confirm', 'TASK-001')
