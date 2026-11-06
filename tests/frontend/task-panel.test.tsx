@@ -8,11 +8,11 @@ import { DecisionList } from '@/components/decision-list'
 it.each([undefined,'https://example.com/result','javascript:alert(1)'])('честно сообщает о недоступном preview %s',url=>{
  render(<TaskCard task={{id:1,state:'review',stage:'done',updated:1,request:'Запрос',artifacts:[],preview:url?{url}:undefined}} transport={{get:vi.fn(),post:vi.fn()}} onRefresh={vi.fn()}/> )
  expect(screen.getByText(/Предпросмотр недоступен/)).toBeTruthy()
- expect(screen.queryByRole('link',{name:'Посмотреть результат'})).toBeNull()
+ expect(screen.queryByRole('link',{name:'Открыть результат'})).toBeNull()
 })
 it('показывает preview до решений и безопасные причины ошибок',()=>{
  const view=render(<TaskCard task={{id:1,state:'review',stage:'done',updated:1,request:'Запрос',artifacts:[],preview:{url:'http://127.0.0.1:8080/'}}} transport={{get:vi.fn(),post:vi.fn()}} onRefresh={vi.fn()}/> )
- expect(screen.getByRole('link',{name:'Посмотреть результат'}).getAttribute('href')).toBe('http://127.0.0.1:8080/')
+ expect(screen.getByRole('link',{name:'Открыть результат'}).getAttribute('href')).toBe('http://127.0.0.1:8080/')
  expect(screen.getByText(/Принять — создать коммит/)).toBeTruthy()
  view.rerender(<TaskCard task={{id:1,state:'accepted',stage:'done',updated:1,request:'Запрос',artifacts:[],integration_error:'<script>ошибка</script>',commit_error:'Ошибка коммита'}} transport={{get:vi.fn(),post:vi.fn()}} onRefresh={vi.fn()}/> )
  expect(screen.getByText('<script>ошибка</script>')).toBeTruthy()
