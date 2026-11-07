@@ -96,7 +96,7 @@ def connect(root, check=None, model=None, backend=None):
 
 def register_project(root):
     from .projects import Projects
-    panel = KIT.parent / 'tw-web'
+    panel = KIT / 'web' if (KIT / 'web' / '.harness/config.json').is_file() else (KIT.parent / 'tw-web')
     registry = panel if (panel / '.harness/config.json').is_file() else root
     return Projects(registry).add(str(root))
 

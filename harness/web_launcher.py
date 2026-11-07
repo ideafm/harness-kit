@@ -144,13 +144,14 @@ class RejectRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def main(argv=None):
+    default_project = KIT / 'web' if (KIT / 'web').exists() else (KIT.parent / 'tw-web')
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] in {'accept', 'request-changes', 'reject', 'approve-plan', 'revise-plan'}:
         from .cli import main as cli_main
-        return cli_main(['--project', str(KIT.parent / 'tw-web'), *arguments])
+        return cli_main(['--project', str(default_project), *arguments])
     parser = argparse.ArgumentParser(prog='tw-web', description='Панель управления Tw')
     parser.add_argument('command', nargs='?', default='open', choices=['open', 'start', 'status', 'stop', 'serve'])
-    parser.add_argument('--project', type=Path, default=KIT.parent / 'tw-web')
+    parser.add_argument('--project', type=Path, default=default_project)
     parser.add_argument('--no-browser', action='store_true')
     args = parser.parse_args(arguments)
     try:
