@@ -1,0 +1,10 @@
+.harness/
+.agents/
+.tw-web/
+__pycache__/
+*.pyc
+node_modules/
+.next/
+build-next/
+next-env.d.ts
+*.tsbuildinfo
