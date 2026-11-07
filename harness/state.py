@@ -62,14 +62,22 @@ class Store:
         if (stat.st_dev, stat.st_ino) != self.identity:
             raise RuntimeError("Экземпляр проекта заменён; перезапустите контроллер")
 
-    def add(self, request, approval_mode="auto", placement='queue'):
+    def add(self, request, approval_mode="auto", placement='queue', backend=None):
         from .approval import validate_mode
+        from .security import validate_backend
         validate_mode(approval_mode)
         if placement not in ('queue', 'backlog'):
             raise ValueError('Нужно выбрать queue или backlog')
+        if backend is not None:
+            selected_backend = validate_backend(backend)
+        elif (self.home / "config.json").is_file():
+            config_data = json.loads((self.home / "config.json").read_text())
+            selected_backend = validate_backend(config_data.get("backend", "codex"))
+        else:
+            selected_backend = "codex"
         self.ensure_current()
         with self.transaction():
-            data = {"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode}
+            data = {"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode, "backend": selected_backend}
             if placement == 'queue':
                 data['queue_order'] = self.next_queue_order()
             row = self.db.execute(
@@ -77,7 +85,7 @@ class Store:
                 ('backlog' if placement == 'backlog' else 'queued', "plan", json.dumps(data), time.time()),
             )
             ident = row.lastrowid
-            self.event(ident, "created", {"request": request, "approval_mode": approval_mode, 'placement': placement})
+            self.event(ident, "created", {"request": request, "approval_mode": approval_mode, 'placement': placement, "backend": selected_backend})
         return self.get(ident)
 
     def next_queue_order(self):

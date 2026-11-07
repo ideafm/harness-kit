@@ -73,10 +73,12 @@ def diagnose(sandbox=False):
               'codex': shutil.which('codex'), 'agy': shutil.which('agy'),
               'tw': shutil.which('tw'), 'tw-web': shutil.which('tw-web')}
     if sandbox:
-        driver = result['codex'] or result['agy']
-        if not driver:
+        if result['codex']:
+            result['sandbox'] = doctor(result['codex'])
+        elif result['agy']:
+            result['sandbox'] = doctor({'backend': 'gemini', 'agy': result['agy'], 'sandbox': '/usr/bin/sandbox-exec'})
+        else:
             raise ValueError('Codex CLI не найден в PATH')
-        result['sandbox'] = doctor(driver)
     return result
 
 

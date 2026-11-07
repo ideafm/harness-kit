@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .cli import dispatch_store
 from .runner import lock
-from .security import safe_env
+from .security import safe_env, validate_backend
 from .state import Store, atomic_json
 
 
@@ -38,7 +38,7 @@ class TaskService:
         result = {k: task[k] for k in ("id", "state", "stage", "updated")}
         result['observation'] = descriptor(self.root, task['id'])
         for key in ("request", "question", "question_kind", "reason", "retry_at", "implementation_summary", "review_verdict",
-                    "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order"):
+                    "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order", "backend"):
             if key in data:
                 result[key] = data[key]
         if task['state'] != 'rate_limited':
@@ -103,6 +103,10 @@ class TaskService:
         task = self.store.get(ident)
         if task["state"] not in {"queued", "running", "rate_limited"}:
             raise ValueError("Для этой задачи нужен ответ или resume, либо она уже завершена")
+        config = json.loads((self.store.home / "config.json").read_text())
+        validate_backend(config.get("backend", "codex"))
+        if task["data"].get("backend") is not None:
+            validate_backend(task["data"]["backend"])
         with lock(self.store, "worker-launch.lock"):
             (self.store.home / "worker.stop").unlink(missing_ok=True)
             status = self.worker_status()
@@ -120,12 +124,14 @@ class TaskService:
                 status = {"running": True, "pid": process.pid}
         return {"task": self.show(ident), "worker": status}
 
-    def submit(self, request, start=True, approval_mode="auto", placement='queue'):
+    def submit(self, request, start=True, approval_mode="auto", placement='queue', backend=None):
         if not isinstance(request, str) or not request.strip() or len(request) > 50000:
             raise ValueError("Нужен текст задачи от 1 до 50000 символов")
         if type(start) is not bool:
             raise ValueError('start должен быть логическим значением')
-        task = self.store.add(request, approval_mode, placement)
+        if backend is not None:
+            backend = validate_backend(backend)
+        task = self.store.add(request, approval_mode, placement, backend=backend)
         if start and placement == 'queue':
             try:
                 return self.start(task["id"])

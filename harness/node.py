@@ -161,12 +161,36 @@ def prepare(root, ident=2):
 
 
 def command(config, scratch, dependencies, argv):
+    from .security import sandbox_command, sandbox_driver, validate_backend
+    runtime_dir = dependencies.parents[1] / 'runtime'
+    if not isinstance(config, dict):
+        return sandbox_command(
+            config,
+            scratch,
+            True,
+            argv,
+            extra_read=(runtime_dir, dependencies),
+            allow_hidden_in_workspace=True,
+        )
+    backend = validate_backend(config.get('backend', 'codex'))
+    if backend == 'gemini':
+        return sandbox_command(
+            config,
+            scratch,
+            True,
+            argv,
+            extra_read=(runtime_dir, dependencies),
+            allow_hidden_in_workspace=True,
+        )
+    driver = sandbox_driver(config)
+    if Path(str(driver)).name in {'gemini', 'agy', 'sandbox-exec'}:
+        raise RuntimeError('Для backend codex требуется исполняемый файл Codex')
     policy = profile(scratch, True)
     policy['filesystem'][str(scratch)] = {'.': 'write', **{pattern: 'deny' for pattern in (
         '**/.env', '**/.env.*', '**/*.env', '**/*.pem', '**/*.key', '**/credentials*', '**/id_rsa*', '**/id_ed25519*')}}
-    policy['filesystem'][str(dependencies.parents[1] / 'runtime')] = 'read'
+    policy['filesystem'][str(runtime_dir)] = 'read'
     policy['filesystem'][str(dependencies)] = 'read'
-    return [config['codex'], 'sandbox', '-c', 'permissions.frontend=' + toml(policy), '-P', 'frontend', '-C', str(scratch), '--', *argv]
+    return [driver, 'sandbox', '-c', 'permissions.frontend=' + toml(policy), '-P', 'frontend', '-C', str(scratch), '--', *argv]
 
 
 def doctor(config, home, dependencies):

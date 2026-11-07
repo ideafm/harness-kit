@@ -5,7 +5,7 @@ import selectors
 import subprocess
 import time
 
-from .security import safe_env
+from .security import safe_env, validate_backend
 from .state import atomic_json
 
 
@@ -17,7 +17,7 @@ class QuotaPause(Exception):
 
 
 def normalize(result, now):
-    buckets = result.get('rateLimitsByLimitId') or {'codex': result.get('rateLimits')}
+    buckets = result.get('rateLimitsByLimitId') or {'default': result.get('rateLimits') or result.get('quota')}
     windows = []
     for bucket in buckets.values():
         if not isinstance(bucket, dict):
@@ -37,9 +37,30 @@ def normalize(result, now):
     return {'observed_at': now, 'windows': windows, 'ordinary_usage_allowed': result.get('ordinaryUsageAllowed', True)}
 
 
-def read(codex, timeout=15):
-    command = [codex, '--no-daemon', 'app-server', '--stdio', '-c', 'mcp_servers={}',
-               '-c', 'features.apps=false', '-c', 'features.plugins=false']
+def resolve_quota_driver(config, backend=None):
+    if not isinstance(config, dict):
+        raise RuntimeError('Некорректная конфигурация лимитов')
+    selected = validate_backend(backend or config.get('backend', 'codex'))
+    if selected == 'gemini':
+        driver = config.get('agy') or config.get('gemini')
+        if not isinstance(driver, str) or not driver.strip():
+            raise RuntimeError('Не задана конфигурация Gemini (agy) для проверки лимитов')
+        return selected, driver
+    driver = config.get('codex')
+    if not isinstance(driver, str) or not driver.strip():
+        raise RuntimeError('Не задана конфигурация Codex для проверки лимитов')
+    return selected, driver
+
+
+def read(executable, timeout=15, backend='codex'):
+    selected = validate_backend(backend)
+    if not isinstance(executable, str) or not executable.strip():
+        raise ValueError('Не задан исполняемый файл сервиса лимитов')
+    if selected == 'gemini':
+        command = [executable, 'acp']
+    else:
+        command = [executable, '--no-daemon', 'app-server', '--stdio', '-c', 'mcp_servers={}',
+                   '-c', 'features.apps=false', '-c', 'features.plugins=false']
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.DEVNULL, env=safe_env())
     selector = selectors.DefaultSelector()
@@ -89,10 +110,12 @@ class Guard:
     def __init__(self, store, config):
         self.store, self.config = store, config
         self.snapshot = None
+        self.snapshot_backend = None
 
-    def check(self, starting=False):
+    def check(self, starting=False, backend=None):
         if not self.config.get('quota_guard'):
             return
+        selected_backend, driver = resolve_quota_driver(self.config, backend)
         now = time.time()
         try:
             policy = self.store.home / 'quota-policy.json'
@@ -109,8 +132,11 @@ class Guard:
                     raise ValueError('Некорректное время контрольной точки')
                 if now < activate_at:
                     cap = None
-            if starting or self.snapshot is None or now - self.snapshot['observed_at'] >= 15:
-                self.snapshot = read(self.config['codex'])
+            if (starting or self.snapshot is None
+                    or (self.snapshot_backend is not None and self.snapshot_backend != selected_backend)
+                    or now - self.snapshot['observed_at'] >= 15):
+                self.snapshot = read(driver) if selected_backend == 'codex' else read(driver, backend='gemini')
+                self.snapshot_backend = selected_backend
                 atomic_json(self.store.home / 'quota.json', self.snapshot)
             for window in self.snapshot['windows']:
                 threshold = (90 if starting else 94) if window['window_minutes'] == 300 else 96
@@ -126,7 +152,8 @@ class Guard:
                     raise QuotaPause(f"Защитная пауза: использовано {window['used_percent']}% лимита; порог пользователя 96%",
                                      window['resets_at'] + 60)
             if not self.snapshot['ordinary_usage_allowed']:
-                raise QuotaPause('Codex временно не разрешает обычные запросы', now + 300)
+                engine = 'Gemini' if selected_backend == 'gemini' else 'Codex'
+                raise QuotaPause(f'{engine} временно не разрешает обычные запросы', now + 300)
         except QuotaPause:
             raise
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, TimeoutError, subprocess.SubprocessError):

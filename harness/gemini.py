@@ -2,12 +2,14 @@ import argparse
 import asyncio
 import importlib.util
 import json
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 from .runner import SCHEMA, RateLimited, execute, validate_result
-from .security import doctor, safe_env, sandbox_command, sandbox_driver
+from .security import doctor, profile, safe_env, sandbox_command, seatbelt_profile
 from .state import atomic_json
 
 
@@ -40,6 +42,31 @@ def resolve_agy(config=None):
         if candidate.is_file():
             return str(candidate.resolve())
     return configured if Path(configured).is_absolute() and Path(configured).is_file() else None
+
+
+def validate_workspace(workspace):
+    candidate = Path(workspace)
+    if candidate.is_symlink() or not candidate.is_dir():
+        raise ValueError("Рабочая область Gemini должна быть существующим каталогом без ссылок")
+    return candidate.resolve()
+
+
+def stage_settings(workspace, writable):
+    resolved = validate_workspace(workspace)
+    return {
+        "workspace": str(resolved),
+        "sandbox": True,
+        "mcpServers": {},
+        "permissions": profile(resolved, writable),
+        "seatbeltProfile": seatbelt_profile(resolved, writable),
+    }
+
+
+def run_workspace_command(workspace, writable, command, timeout=30, config=None):
+    resolved = validate_workspace(workspace)
+    sandbox_cfg = config if isinstance(config, dict) else {"backend": "gemini", "sandbox": "/usr/bin/sandbox-exec"}
+    wrapped = sandbox_command(sandbox_cfg, resolved, writable, list(command))
+    return subprocess.run(wrapped, cwd=str(resolved), env=safe_env(), capture_output=True, text=True, timeout=timeout)
 
 
 def extract_json_payload(raw_text):
@@ -78,29 +105,39 @@ class Gemini:
         self.config = config
 
     def preflight(self):
-        result = doctor(sandbox_driver(self.config))
+        result = doctor({**self.config, "backend": "gemini"})
         if not resolve_agy(self.config) and not sdk_available():
             raise RuntimeError("Antigravity CLI (agy) или Python SDK (google-antigravity) не найден")
         return result
 
     def build_command(self, stage, workspace, schema, answer):
+        if stage not in {"plan", "implement", "review"}:
+            raise ValueError(f"Неизвестный этап: {stage}")
+        resolved_workspace = validate_workspace(workspace)
+        writable = stage == "implement"
         mode = self.config.get("gemini_mode")
         agy = None if mode == "sdk" else resolve_agy(self.config)
         if agy:
-            inner = [
+            settings = stage_settings(resolved_workspace, writable)
+            command = [
                 agy,
+                "--sandbox",
+                "--mode",
+                "auto" if writable else "plan",
+                "--disable-slash-commands",
+                "--settings",
+                json.dumps(settings, sort_keys=True),
                 "--output-format",
                 "json",
                 "--json-schema",
                 str(schema),
-                "--sandbox",
-                "--dangerously-skip-permissions",
-                "--disable-slash-commands",
             ]
+            if writable:
+                command.append("--dangerously-skip-permissions")
             if self.config.get("model"):
-                inner += ["--model", self.config["model"]]
-            inner += ["-p", "-"]
-            return sandbox_command(self.config, workspace, stage == "implement", inner)
+                command += ["--model", self.config["model"]]
+            command += ["-p", "-"]
+            return command
         if not sdk_available():
             raise RuntimeError("Antigravity CLI (agy) или Python SDK (google-antigravity) не найден")
         command = [
@@ -111,7 +148,7 @@ class Gemini:
             "--stage",
             stage,
             "--workspace",
-            str(workspace),
+            str(resolved_workspace),
             "--schema",
             str(schema),
             "--output",
@@ -119,16 +156,17 @@ class Gemini:
         ]
         if self.config.get("model"):
             command += ["--model", self.config["model"]]
-        return sandbox_command(self.config, workspace, stage == "implement", command)
+        return command
 
     def call(self, stage, workspace, folder, prompt, interrupted):
+        resolved_workspace = validate_workspace(workspace)
         schema = folder / f"{stage}.schema.json"
         answer = folder / f"{stage}.response.json"
         atomic_json(schema, SCHEMA)
         answer.unlink(missing_ok=True)
-        command = self.build_command(stage, workspace, schema, answer)
+        command = self.build_command(stage, resolved_workspace, schema, answer)
         log = folder / f"{stage}.jsonl"
-        code = execute(command, workspace, log, self.config["timeout"], interrupted, prompt, env=safe_env())
+        code = execute(command, resolved_workspace, log, self.config["timeout"], interrupted, prompt, env=safe_env())
         if code:
             tail = log.read_text(errors="replace")[-12000:]
             lowered = tail.lower()
@@ -149,35 +187,58 @@ class Gemini:
 
 
 async def run_sdk(stage, workspace, schema_path, output_path, model, prompt):
+    resolved_workspace = validate_workspace(workspace)
+    writable = stage == "implement"
     from google.antigravity import Agent, CapabilitiesConfig, LocalAgentConfig
+    readonly_tools = None
+    if not writable:
+        try:
+            from google.antigravity.types import BuiltinTools
+            readonly_tools = BuiltinTools.read_only()
+        except ImportError as error:
+            raise RuntimeError("Read-only инструменты SDK недоступны; выполнение запрещено") from error
+        if not readonly_tools:
+            raise RuntimeError("Пустой набор read-only инструментов SDK; выполнение запрещено")
+    def wrap_tool_command(argv):
+        return sandbox_command({"backend": "gemini", "sandbox": "/usr/bin/sandbox-exec"}, resolved_workspace, writable, list(argv))
+    cap_kwargs = {"workspace": str(resolved_workspace), "sandbox_command": wrap_tool_command}
+    if not writable:
+        cap_kwargs["enabled_tools"] = readonly_tools
     try:
-        from google.antigravity.types import BuiltinTools
-        readonly_tools = BuiltinTools.read_only()
-    except ImportError:
-        readonly_tools = None
-    if stage == "implement":
-        capabilities = CapabilitiesConfig()
-    elif readonly_tools is not None:
-        capabilities = CapabilitiesConfig(enabled_tools=readonly_tools)
-    else:
-        capabilities = None
-    kwargs = {"system_instructions": "Верни строго валидный JSON по переданной схеме без Markdown-обёрток."}
-    if capabilities is not None:
-        kwargs["capabilities"] = capabilities
+        capabilities = CapabilitiesConfig(**cap_kwargs)
+    except TypeError:
+        capabilities = CapabilitiesConfig(enabled_tools=readonly_tools) if not writable else CapabilitiesConfig()
+        setattr(capabilities, "workspace", str(resolved_workspace))
+        setattr(capabilities, "sandbox_command", wrap_tool_command)
+    kwargs = {
+        "workspace": str(resolved_workspace),
+        "capabilities": capabilities,
+        "system_instructions": "Верни строго валидный JSON по переданной схеме без Markdown-обёрток.",
+    }
     if model:
         kwargs["model"] = model
     schema_text = Path(schema_path).read_text()
     full_prompt = f"{prompt}\n\nJSON Schema:\n{schema_text}"
-    config = LocalAgentConfig(**kwargs)
-    chunks = []
-    async with Agent(config) as agent:
-        response = await agent.chat(full_prompt)
-        if hasattr(response, "text") and callable(response.text):
-            text = await response.text()
-        else:
-            async for token in response:
-                chunks.append(str(token))
-            text = "".join(chunks)
+    previous_cwd = None
+    try:
+        previous_cwd = Path.cwd()
+    except OSError:
+        previous_cwd = None
+    os.chdir(resolved_workspace)
+    try:
+        config = LocalAgentConfig(**kwargs)
+        chunks = []
+        async with Agent(config) as agent:
+            response = await agent.chat(full_prompt)
+            if hasattr(response, "text") and callable(response.text):
+                text = await response.text()
+            else:
+                async for token in response:
+                    chunks.append(str(token))
+                text = "".join(chunks)
+    finally:
+        if previous_cwd is not None and previous_cwd.exists():
+            os.chdir(previous_cwd)
     payload = extract_json_payload(text)
     validate_result(payload)
     atomic_json(Path(output_path), payload)

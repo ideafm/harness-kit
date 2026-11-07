@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .approval import requires_approval, verify_documents, version
-from .security import doctor, export_snapshot, git, permission_args, protected, regular_files, read_regular, tree_entries, safe_env, sandbox_command, toml
+from .security import doctor, export_snapshot, git, permission_args, protected, regular_files, read_regular, tree_entries, safe_env, sandbox_command, toml, validate_backend
 from .state import StateChanged, atomic_json
 from .quota import Guard, QuotaPause
 
@@ -163,25 +163,47 @@ def validate_result(result):
         raise ValueError("Агент запросил остановку без вопроса")
 
 
-def create_backend(config):
-    if config.get("backend") == "gemini" or ("agy" in config and "codex" not in config):
+def create_backend(config, backend=None):
+    if not isinstance(config, dict):
+        raise ValueError("Некорректная конфигурация исполнителя")
+    raw = backend if backend is not None else config.get("backend", "codex")
+    selected = validate_backend(raw or "codex")
+    effective = {**config, "backend": selected}
+    if selected == "gemini":
         from .gemini import Gemini
-        return Gemini(config)
-    return Codex(config)
+        return Gemini(effective)
+    return Codex(effective)
 
 
 class Runner:
-    def __init__(self, store, backend=None, check=None):
+    def __init__(self, store, backend=None, check=None, backend_name=None):
         self.store = store
         self.config = json.loads((store.home / "config.json").read_text())
-        self.backend = backend or create_backend(self.config)
+        self.backend_override = backend
+        self.backend_name = validate_backend(backend_name) if backend_name is not None else None
+        self.backend = backend or create_backend(self.config, self.backend_name)
         self.check_override = check
         self.quota = Guard(store, self.config)
 
+    def task_backend(self, task):
+        saved = task["data"].get("backend")
+        if saved is not None:
+            return validate_backend(saved)
+        if self.backend_name is not None:
+            return self.backend_name
+        return validate_backend(self.config.get("backend", "codex"))
+
+    def adapter_for(self, task):
+        selected = self.task_backend(task)
+        if self.backend_override is not None:
+            return self.backend_override
+        return create_backend(self.config, selected)
+
     def interrupted(self, ident):
-        if self.store.get(ident)["state"] != "running":
+        current = self.store.get(ident)
+        if current["state"] != "running":
             return True
-        self.quota.check()
+        self.quota.check(backend=self.task_backend(current))
         return False
 
     def persist(self, task, kind, detail=None):
@@ -195,6 +217,11 @@ class Runner:
             if task["state"] == "rate_limited" and task["data"].get("retry_at", 0) > time.time():
                 return
             try:
+                if self.backend_name is not None and not any(task["data"].get("attempts", {}).values()):
+                    task["data"]["backend"] = self.backend_name
+                selected_backend = self.task_backend(task)
+                task["data"]["backend"] = selected_backend
+                active_backend = self.adapter_for(task)
                 active = self.store.folder(ident) / "active.json"
                 if active.exists():
                     pid = json.loads(active.read_text())["pid"]
@@ -204,21 +231,21 @@ class Runner:
                         active.unlink()
                     else:
                         raise RuntimeError(f"Предыдущий процесс {pid} ещё существует; проверьте его перед продолжением")
-                self.backend.preflight()
+                active_backend.preflight()
                 if self.store.get(ident)["state"] == "paused":
                     return
                 previous_state = task["state"]
                 task['data'].pop('retry_at', None)
                 task['data'].pop('reason', None)
                 task["state"] = "running"
-                self.store.save(task, "started", {"stage": task["stage"]}, expected=previous_state)
+                self.store.save(task, "started", {"stage": task["stage"], "backend": selected_backend}, expected=previous_state)
                 self.prepare(task)
                 previous_attempts = dict(task['data']['attempts'])
                 while task["stage"] != "done":
                     previous_attempts = dict(task['data']['attempts'])
                     if self.interrupted(ident):
                         raise Interrupted()
-                    self.quota.check(starting=True)
+                    self.quota.check(starting=True, backend=selected_backend)
                     self.step(task)
                     if task["state"] != "running":
                         break
@@ -244,8 +271,9 @@ class Runner:
                                  {'retry_at': error.retry_at, 'reason': str(error)})
             except RateLimited:
                 count = task["data"].get("limit_count", 0) + 1
+                engine = "Gemini" if self.task_backend(task) == "gemini" else "Codex"
                 task["data"].update(limit_count=count, retry_at=time.time() + min(300 * 2 ** min(count - 1, 6), 18000),
-                                    reason="Лимит Codex; время сброса неизвестно, используется backoff")
+                                    reason=f"Лимит {engine}; время сброса неизвестно, используется backoff")
                 attempts = task["data"]["attempts"]
                 attempts[task["stage"]] = max(0, attempts.get(task["stage"], 1) - 1)
                 task["state"] = "rate_limited"
@@ -359,9 +387,9 @@ class Runner:
                 code = self.check_override(workspace, folder)
             elif data.get('frontend_toolchain') == 'next-ui':
                 from .node import check as frontend_check
-                code = frontend_check(workspace, folder, self.config, lambda: self.interrupted(task['id']))
+                code = frontend_check(workspace, folder, {**self.config, "backend": self.task_backend(task)}, lambda: self.interrupted(task['id']))
             else:
-                code = execute(sandbox_command(self.config, workspace, True, self.config["check"]),
+                code = execute(sandbox_command({**self.config, "backend": self.task_backend(task)}, workspace, True, self.config["check"]),
                                workspace, folder / "check.log", self.config["timeout"], lambda: self.interrupted(task["id"]))
             if code:
                 data["feedback"] = "Проверки красные.\n" + (folder / "check.log").read_text(errors="replace")[-16000:]
@@ -386,7 +414,7 @@ class Runner:
             self.report(task)
             if data["changes"] != data["check_receipt"]["changes"]:
                 raise RuntimeError("Рабочая копия изменилась после проверок; ревью запрещено")
-        result = self.backend.call(stage, workspace, folder, self.prompt(task), lambda: self.interrupted(task["id"]))
+        result = self.adapter_for(task).call(stage, workspace, folder, self.prompt(task), lambda: self.interrupted(task["id"]))
         if self.store.get(task['id'])['state'] != 'running':
             raise Interrupted()
         validate_result(result)

@@ -11,30 +11,33 @@ from pathlib import Path
 from .approval import MODES, approve, revise
 from .decisions import decide
 from .runner import Runner, lock
-from .security import doctor, git
+from .security import BACKENDS, doctor, git, validate_backend
 from .state import Store, atomic_json
 
 
 def parser():
     command = argparse.ArgumentParser(description="Автономный Codex harness")
     command.add_argument("--project", type=Path, default=Path.cwd())
+    command.add_argument("--backend", dest="global_backend", type=validate_backend, choices=BACKENDS, default=None)
     sub = command.add_subparsers(dest="command", required=True)
     init = sub.add_parser("init", help="Инициализировать проект")
     init.add_argument("--check", required=True, help="Команда проверок без shell-операторов")
     init.add_argument("--model", default="")
-    init.add_argument("--backend", choices=["gemini", "codex"], default="gemini")
+    init.add_argument("--backend", type=validate_backend, choices=BACKENDS, default="codex")
     init.add_argument("--codex", default="codex")
     init.add_argument("--agy", default="agy")
     init.add_argument("--timeout", type=int, default=1800)
     add = sub.add_parser("add", help="Добавить задачу")
     add.add_argument("request")
     add.add_argument("--approval", choices=MODES, default="auto")
+    add.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
     add.add_argument('--backlog', action='store_true', help='Сохранить без разрешения на выполнение')
     enqueue = sub.add_parser('enqueue', help='Добавить выбранные задачи в очередь в указанном порядке')
     enqueue.add_argument('tasks', nargs='+', type=task_id)
     enqueue.add_argument('--start', action='store_true', help='Также запустить worker')
     sub.add_parser("status", help="Показать задачи и ожидания")
-    sub.add_parser("doctor", help="Проверить ограничения на безопасных canary-файлах")
+    doctor_parser = sub.add_parser("doctor", help="Проверить ограничения на безопасных canary-файлах")
+    doctor_parser.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
     runtime_profile = sub.add_parser('profile', help='Профиль просмотра проекта')
     runtime_profile.add_argument('action', choices=['configure', 'status'])
     runtime_profile.add_argument('--adapter', dest='action_adapter', choices=['static', 'next-ui'])
@@ -61,6 +64,8 @@ def parser():
     for action in ("run", "show", "pause", "resume", "accept"):
         child = sub.add_parser(action)
         child.add_argument("task", type=task_id)
+        if action == "run":
+            child.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
         if action == "accept":
             child.add_argument("--confirm", required=True, help="Точная строка TASK-NNN")
     answer = sub.add_parser("answer")
@@ -82,6 +87,7 @@ def parser():
     rejection.add_argument("--confirm", required=True)
     worker = sub.add_parser("worker", help="Обрабатывать очередь до Ctrl-C")
     worker.add_argument("--once", action="store_true")
+    worker.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
     return command
 
 
@@ -124,12 +130,12 @@ def init(args):
         raise ValueError("Нужна команда проверок и положительный timeout")
     if any(token in {";", "&&", "||", "|", ">", "<"} for token in check):
         raise ValueError("check — argv, без shell-операторов; вынесите составную проверку в скрипт")
-    backend = getattr(args, "backend", "gemini")
+    backend = validate_backend(getattr(args, "global_backend", None) or getattr(args, "backend", "codex") or "codex")
     codex = shutil.which(args.codex)
     agy = shutil.which(getattr(args, "agy", "agy"))
     if backend == "codex" and not codex:
         raise ValueError("Codex CLI не найден")
-    if backend == "gemini" and not agy and not Path("/usr/bin/sandbox-exec").is_file() and not codex:
+    if backend == "gemini" and not Path("/usr/bin/sandbox-exec").is_file() and not agy:
         raise ValueError("Antigravity CLI (agy) или sandbox-exec не найден")
     executable = shutil.which(check[0])
     if not executable:
@@ -148,12 +154,18 @@ def init(args):
 
 
 def dispatch(args):
+    if getattr(args, "global_backend", None) is not None:
+        args.backend = validate_backend(args.global_backend)
+    if getattr(args, "backend", None) is not None:
+        validate_backend(args.backend)
     if args.command == "init":
         init(args)
         return
     root = args.project.resolve()
     if not (root / ".harness" / "config.json").is_file():
         raise ValueError("Сначала выполните init --check 'команда проверок'")
+    config = json.loads((root / ".harness" / "config.json").read_text())
+    validate_backend(config.get("backend", "codex"))
     store = Store(root)
     try:
         return dispatch_store(args, store)
@@ -172,7 +184,8 @@ def dispatch_store(args, store):
         if not args.request.strip():
             raise ValueError("Пустая задача")
         print(summary(store.add(args.request, getattr(args, "approval", "auto"),
-            'backlog' if getattr(args, 'backlog', False) else 'queue')))
+            'backlog' if getattr(args, 'backlog', False) else 'queue',
+            backend=getattr(args, "backend", None))))
     elif action == 'enqueue':
         from .service import TaskService
         service = TaskService(store.root)
@@ -189,7 +202,8 @@ def dispatch_store(args, store):
             print(summary(task))
     elif action == "doctor":
         config = json.loads((store.home / "config.json").read_text())
-        print(doctor(config if config.get("backend") == "gemini" else config["codex"]))
+        selected = validate_backend(getattr(args, "backend", None) or config.get("backend", "codex"))
+        print(doctor({**config, "backend": selected} if selected == "gemini" else config["codex"]))
     elif action == 'watch':
         from .service import TaskService
         from .observation import watch
@@ -216,7 +230,7 @@ def dispatch_store(args, store):
         prepare(store, args.task, args.from_task)
         print('Основа подготовлена; приёмка и применение не выполнялись. Для продолжения используйте answer/resume.')
     elif action == "worker":
-        runner = Runner(store)
+        runner = Runner(store, backend_name=getattr(args, "backend", None))
         with lock(store, "worker.lock"):
             while True:
                 if (store.home / "worker.stop").exists():
@@ -238,7 +252,7 @@ def dispatch_store(args, store):
                     break
                 time.sleep(5)
     elif action == "run":
-        Runner(store).run(args.task)
+        Runner(store, backend_name=getattr(args, "backend", None)).run(args.task)
         print(summary(store.get(args.task)))
     elif action == "approve-plan":
         approve(store, args.task, args.version, args.confirm)

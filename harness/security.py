@@ -12,6 +12,15 @@ from pathlib import Path, PurePosixPath
 SECRET_PATTERNS = ["**/.*", "**/*.env", "**/*.env.*", "**/*.pem", "**/*.key",
                    "**/*.p12", "**/*.pfx", "**/credentials*", "**/secret*",
                    "**/id_rsa*", "**/id_ed25519*", "**/id_ecdsa*"]
+BACKENDS = ("codex", "gemini")
+
+
+def validate_backend(backend):
+    if backend is None:
+        return "codex"
+    if not isinstance(backend, str) or backend not in BACKENDS:
+        raise ValueError(f"Неподдерживаемый backend: {backend}")
+    return backend
 
 
 def protected(path):
@@ -130,54 +139,92 @@ def permission_args(workspace, writable):
             "-c", 'default_permissions="harness"']
 
 
-def seatbelt_profile(workspace, writable):
+def seatbelt_quote_regex(pattern):
+    escaped = pattern.replace('"', '\\"')
+    return f'#"{escaped}"'
+
+
+def seatbelt_profile(workspace, writable, extra_read=(), allow_hidden_in_workspace=False):
     resolved = str(Path(workspace).resolve())
-    escaped = re.escape(resolved)
+    extra_resolved = []
+    for item in extra_read:
+        candidate = Path(item)
+        if candidate.is_symlink():
+            raise ValueError("Дополнительный путь чтения не должен быть ссылкой")
+        extra_resolved.append(str(candidate.resolve()))
     ancestors = {"/", "/private", "/var", "/private/var", "/tmp", "/private/tmp"}
-    for candidate in (Path(workspace).absolute(), Path(workspace).resolve()):
-        current = candidate
-        while str(current) != current.root:
-            ancestors.add(str(current))
-            current = current.parent
-        ancestors.add(current.root)
+    for item in (workspace, *extra_read):
+        for candidate in (Path(item).absolute(), Path(item).resolve()):
+            current = candidate
+            while str(current) != current.root:
+                ancestors.add(str(current))
+                current = current.parent
+            ancestors.add(current.root)
     metadata_rules = " ".join(f"(literal {json.dumps(path)})" for path in sorted(ancestors))
     system_roots = {"/usr", "/bin", "/sbin", "/System", "/Library", "/Applications",
                     "/opt/homebrew", "/private/var/select", "/dev",
-                    str(Path(sys.base_prefix).resolve()), str(Path(sys.base_prefix))}
+                    str(Path(sys.base_prefix).resolve()), str(Path(sys.base_prefix)),
+                    *extra_resolved}
     read_rules = " ".join(f"(subpath {json.dumps(path)})" for path in sorted(system_roots))
     write_rule = f"(allow file-write* (subpath {json.dumps(resolved)}))\n" if writable else ""
-    hidden_regex = f"^{escaped}/(.*/)?\\.[^/]+(/.*)?$"
-    secret_regex = f"(?i)^{escaped}/(.*/)?([^/]*\\.env(\\.[^/]+)?|[^/]*\\.(pem|key|p12|pfx)|credentials[^/]*|secret[^/]*|id_(rsa|ed25519|ecdsa)[^/]*)(/.*)?$"
+    hidden_targets = set(system_roots) | (set() if allow_hidden_in_workspace else {resolved})
+    hidden_roots = [re.escape(path) for path in sorted(hidden_targets)]
+    hidden_patterns = [f"^{root}/(.*/)?\\.[^/]+(/.*)?$" for root in hidden_roots]
+    hidden_rules = " ".join(f"(regex {seatbelt_quote_regex(pattern)})" for pattern in hidden_patterns)
+    secret_regex = (
+        "^/(.*/)?("
+        "[^/]*\\.[Ee][Nn][Vv](\\.[^/]+)?|"
+        "[^/]*\\.([Pp][Ee][Mm]|[Kk][Ee][Yy]|[Pp]12|[Pp][Ff][Xx])|"
+        "[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss][^/]*|"
+        "[Ss][Ee][Cc][Rr][Ee][Tt][^/]*|"
+        "[Ii][Dd]_([Rr][Ss][Aa]|[Ee][Dd]25519|[Ee][Cc][Dd][Ss][Aa])[^/]*"
+        ")(/.*)?$"
+    )
     return (
         "(version 1)\n"
         "(deny default)\n"
         "(allow process* signal sysctl-read mach-lookup)\n"
         f"(allow file-read-metadata {metadata_rules})\n"
-        f"(allow file-read* {read_rules} (subpath {json.dumps(resolved)}))\n"
+        f"(allow file-read* (literal \"/\") {read_rules} (subpath {json.dumps(resolved)}))\n"
         "(allow file-write-data (literal \"/dev/null\") (literal \"/dev/tty\"))\n"
         f"{write_rule}"
-        f"(deny file-read* file-write* (regex #{json.dumps(hidden_regex)}) (regex #{json.dumps(secret_regex)}))\n"
+        f"(deny file-read* file-write* {hidden_rules} (regex {seatbelt_quote_regex(secret_regex)}))\n"
     )
 
 
 def sandbox_driver(config_or_driver):
     if isinstance(config_or_driver, dict):
-        if config_or_driver.get("backend") == "gemini" and not config_or_driver.get("codex_sandbox"):
-            return config_or_driver.get("sandbox") or "/usr/bin/sandbox-exec"
-        return config_or_driver.get("codex") or config_or_driver.get("sandbox") or "/usr/bin/sandbox-exec"
-    return config_or_driver or "/usr/bin/sandbox-exec"
+        backend = validate_backend(config_or_driver.get("backend", "codex"))
+        if backend == "gemini":
+            driver = config_or_driver.get("sandbox") or "/usr/bin/sandbox-exec"
+            if not isinstance(driver, str) or not driver.strip():
+                raise RuntimeError("Не задан драйвер sandbox для Gemini")
+            return driver
+        driver = config_or_driver.get("codex")
+        if not isinstance(driver, str) or not driver.strip():
+            raise RuntimeError("Не задан исполняемый файл Codex для sandbox")
+        return driver
+    if not config_or_driver or not str(config_or_driver).strip():
+        raise RuntimeError("Не задан драйвер sandbox")
+    return str(config_or_driver)
 
 
-def sandbox_command(codex, workspace, writable, command):
+def sandbox_command(codex, workspace, writable, command, extra_read=(), allow_hidden_in_workspace=False):
     driver = sandbox_driver(codex)
-    if Path(str(driver)).name in {"sandbox-exec", "gemini", "agy"}:
-        executable = str(driver) if Path(str(driver)).name == "sandbox-exec" else "/usr/bin/sandbox-exec"
-        return [executable, "-p", seatbelt_profile(workspace, writable), *command]
+    if Path(str(driver)).name == "sandbox-exec":
+        return [
+            str(driver),
+            "-p",
+            seatbelt_profile(workspace, writable, extra_read=extra_read, allow_hidden_in_workspace=allow_hidden_in_workspace),
+            *command,
+        ]
+    if Path(str(driver)).name in {"gemini", "agy"}:
+        raise RuntimeError("Исполняемый файл агента не является драйвером sandbox")
     return [str(driver), "sandbox", *permission_args(workspace, writable), "-P", "harness",
             "-C", str(workspace), "--", *command]
 
 
-def doctor(codex="/usr/bin/sandbox-exec"):
+def doctor(codex="codex"):
     if sys.platform != "darwin":
         raise RuntimeError("Первая версия разрешена только на macOS; Linux требует отдельной проверки изоляции")
     with tempfile.TemporaryDirectory(prefix="harness-canary-") as temporary:

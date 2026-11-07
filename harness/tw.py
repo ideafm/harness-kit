@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from .cli import main as harness_main
-from .security import doctor, permission_args, safe_env, toml
+from .security import BACKENDS, doctor, permission_args, profile, safe_env, seatbelt_profile, toml, validate_backend
 from .service import KIT, TaskService
 from .state import atomic_json
 
@@ -26,6 +26,8 @@ def inferred_check(root):
 
 
 def connect(root, check=None, model=None, backend=None):
+    if backend is not None:
+        backend = validate_backend(backend)
     from .projects import Projects
     root = Projects(KIT).validate(str(Path(root).absolute())).resolve()
     if root == KIT:
@@ -67,11 +69,10 @@ def connect(root, check=None, model=None, backend=None):
             selected = input("Команда проверок проекта: ").strip()
         if not selected:
             raise ValueError("Укажите команду проверок: tw init --check 'команда'")
-        arguments = ["--project", str(root), "init", "--check", selected]
+        selected_backend = validate_backend(backend or "codex")
+        arguments = ["--project", str(root), "init", "--check", selected, "--backend", selected_backend]
         if model:
             arguments += ["--model", model]
-        if backend:
-            arguments += ["--backend", backend]
         harness_main(arguments)
     elif check or model:
         raise ValueError("Проект уже подключён; повторный init не меняет check/model")
@@ -119,19 +120,39 @@ def verified_setup_paths(root):
 def chat_command(root, headless=False, prompt=None):
     root = Path(root).resolve()
     config = json.loads((root / ".harness/config.json").read_text())
+    backend = validate_backend(config.get("backend", "codex"))
     default_prompt = "Работай со skill $tw. Покажи текущий статус через MCP Tw и помоги поставить следующую задачу. Не меняй исходники напрямую."
-    if config.get("backend") == "gemini":
+    server = {"command": str(Path(sys.executable).resolve()), "args": [str(KIT / "bin/tw-mcp"), "--project", str(root)],
+              "required": True, "default_tools_approval_mode": "auto", "startup_timeout_sec": 20}
+    if backend == "gemini":
         agy = config.get("agy") or "agy"
-        command = [agy, "--sandbox"]
+        if not isinstance(agy, str) or not agy.strip():
+            raise RuntimeError("Не задан исполняемый файл Gemini (agy)")
+        settings = {
+            "workspace": str(root),
+            "sandbox": True,
+            "mode": "plan",
+            "ignoreUserConfig": bool(headless),
+            "mcpServers": {"tw": server},
+            "permissions": {"harness": profile(root, False), "default": "harness"},
+            "seatbeltProfile": seatbelt_profile(root, False),
+        }
+        command = [
+            agy,
+            "--sandbox",
+            "--mode",
+            "plan",
+            "--disable-slash-commands",
+            "--settings",
+            json.dumps(settings, sort_keys=True),
+        ]
         if config.get("model"):
             command += ["--model", config["model"]]
         if headless:
-            command += ["--output-format", "json", "--dangerously-skip-permissions", "-p", prompt or default_prompt]
+            command += ["--output-format", "json", "-p", prompt or default_prompt]
         else:
             command += [prompt or default_prompt]
         return command
-    server = {"command": str(Path(sys.executable).resolve()), "args": [str(KIT / "bin/tw-mcp"), "--project", str(root)],
-              "required": True, "default_tools_approval_mode": "auto", "startup_timeout_sec": 20}
     command = [config["codex"], "--no-daemon"]
     if headless:
         command += ["exec", "--ignore-user-config", "--ephemeral", "--json"]
@@ -149,9 +170,84 @@ def chat_command(root, headless=False, prompt=None):
     return command
 
 
+def verify_gemini_servers(command):
+    if "--sandbox" not in command or "--mode" not in command:
+        raise RuntimeError("Сессия Gemini требует read-only режим --sandbox и --mode plan")
+    mode_index = command.index("--mode") + 1
+    if mode_index >= len(command) or command[mode_index] != "plan":
+        raise RuntimeError("Сессия Gemini в чате должна запускаться только в read-only режиме plan")
+    if "--settings" not in command:
+        raise RuntimeError("Сессия Gemini требует изолированных настроек --settings")
+    settings_index = command.index("--settings") + 1
+    if settings_index >= len(command):
+        raise RuntimeError("Отсутствует значение --settings")
+    try:
+        settings = json.loads(command[settings_index])
+    except json.JSONDecodeError as error:
+        raise RuntimeError("Некорректный JSON в --settings") from error
+    workspace = settings.get("workspace")
+    permissions = (settings.get("permissions") or {}).get("harness") or {}
+    filesystem = permissions.get("filesystem") or {}
+    ws_policy = filesystem.get(str(Path(workspace).resolve()) if workspace else "") or {}
+    mcp_servers = settings.get("mcpServers") or {}
+    tw_server = mcp_servers.get("tw") or {}
+    if ws_policy.get(".") != "read" or not settings.get("sandbox") or not tw_server.get("required"):
+        raise RuntimeError("Команда Gemini не содержит read-only профиль и обязательный MCP-сервер tw")
+    headless = "-p" in command or "--print" in command
+    if headless and not settings.get("ignoreUserConfig"):
+        raise RuntimeError("Headless Tw требует изоляции пользовательской конфигурации")
+    raw_options = command[1:-2] if headless and len(command) >= 3 and command[-2] in {"-p", "--print"} else command[1:-1]
+    options = []
+    skip_next = False
+    for index, token in enumerate(raw_options):
+        if skip_next:
+            skip_next = False
+            continue
+        if token == "--output-format":
+            skip_next = True
+            continue
+        if token in {"-p", "--print"}:
+            continue
+        options.append(token)
+    for attempt in range(2):
+        result = subprocess.run([command[0], *options, "mcp", "list", "--json"], env=safe_env(),
+                                capture_output=True, text=True, timeout=30, check=True)
+        try:
+            entries = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("Не удалось разобрать список MCP-серверов Gemini") from error
+        if not isinstance(entries, list):
+            raise RuntimeError("Некорректный формат списка MCP-серверов Gemini")
+        enabled = [entry["name"] for entry in entries if isinstance(entry, dict) and entry.get("enabled", True)]
+        if enabled == ["tw"]:
+            return
+        if attempt or "tw" not in enabled:
+            break
+        for name in enabled:
+            if name != "tw":
+                if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                    raise RuntimeError("Имя MCP не поддерживает безопасное отключение")
+                settings["mcpServers"][name] = {"enabled": False}
+                override = ["-c", "mcp_servers." + name + ".enabled=false"]
+                options.extend(override)
+                if not headless:
+                    command[-1:-1] = override
+        updated_settings = json.dumps(settings, sort_keys=True)
+        if "--settings" in options:
+            options[options.index("--settings") + 1] = updated_settings
+        if not headless:
+            command[command.index("--settings") + 1] = updated_settings
+    raise RuntimeError("Не удалось изолировать MCP: включены посторонние серверы. Сессия не запущена.")
+
+
 def verify_servers(command):
-    if Path(command[0]).name == "agy":
-        return
+    if not command or not isinstance(command, list):
+        raise RuntimeError("Пустая команда запуска чата")
+    if "--settings" in command or Path(str(command[0])).name in {"agy", "gemini"}:
+        return verify_gemini_servers(command)
+    joined = " ".join(command)
+    if '"." = "read"' not in joined or '"required" = true' not in joined:
+        raise RuntimeError("Команда чата требует read-only профиль и обязательный MCP-сервер tw")
     options = command[1:-1]
     if options and options[0] == "--no-daemon":
         options = options[1:]
@@ -163,8 +259,13 @@ def verify_servers(command):
     for attempt in range(2):
         result = subprocess.run([command[0], *options, "mcp", "list", "--json"], env=safe_env(),
                                 capture_output=True, text=True, timeout=30, check=True)
-        entries = json.loads(result.stdout)
-        enabled = [entry["name"] for entry in entries if entry.get("enabled", True)]
+        try:
+            entries = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("Не удалось разобрать список MCP-серверов") from error
+        if not isinstance(entries, list):
+            raise RuntimeError("Некорректный формат списка MCP-серверов")
+        enabled = [entry["name"] for entry in entries if isinstance(entry, dict) and entry.get("enabled", True)]
         if enabled == ["tw"]:
             return
         if attempt or "tw" not in enabled:
@@ -180,21 +281,50 @@ def verify_servers(command):
     raise RuntimeError("Не удалось изолировать MCP: включены посторонние серверы. Сессия не запущена.")
 
 
+def first_subcommand(arguments):
+    value_flags = {"--project", "--check", "--model", "--backend", "--bin-dir", "--adapter", "--mode", "--from-task", "--approval", "--version", "--confirm", "--reason", "--codex", "--agy", "--timeout"}
+    skip_next = False
+    for token in arguments:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in {"-h", "--help"}:
+            return "--help"
+        if token.startswith("--"):
+            if "=" not in token and token in value_flags:
+                skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        return token
+    return "chat"
+
+
+def validate_cli_backend_flags(arguments):
+    for index, token in enumerate(arguments):
+        if token == "--backend":
+            if index + 1 >= len(arguments):
+                raise ValueError("Укажите значение --backend: codex или gemini")
+            validate_backend(arguments[index + 1])
+        elif token.startswith("--backend="):
+            validate_backend(token.split("=", 1)[1])
+
+
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
-    command = arguments[0] if arguments else "chat"
+    command = first_subcommand(arguments)
     if command in {'install', 'diagnose'}:
         from .installation import main as installation_main
         return installation_main(arguments)
     if command in {"--help", "-h", "help"}:
-        print("Tw — Codex со скиллом и контроллером задач\n\n"
+        print("Tw — Codex/Gemini со скиллом и контроллером задач\n\n"
               "  tw install [--bin-dir PATH]  Установить launcher без изменения shell-конфигов\n"
               "  tw diagnose [--sandbox]      Проверить установку до подключения проекта\n"
               "  tw profile configure --adapter static|next-ui\n"
               "  tw view TASK-NNN --mode working|checked\n"
               "  tw view status / stop        Постоянный просмотр проекта\n"
-              "  tw init [--check 'команда']   Подключить текущий проект\n"
-              "  tw                            Открыть сессию Codex с Tw\n"
+              "  tw init [--check 'команда'] [--backend codex|gemini]\n"
+              "  tw [--backend codex|gemini]  Открыть защищённую сессию Tw\n"
               "  tw status / show TASK-NNN      Посмотреть задачи\n"
               "  tw add 'задача'                Поставить в очередь\n"
               "  tw add 'задача' --approval approve-plan\n"
@@ -220,15 +350,19 @@ def main(argv=None):
         finally:
             service.close()
         return
-    if command not in {"init", "chat"}:
-        harness_main(arguments)
-        return
     parser = argparse.ArgumentParser(prog="tw", description="Подключить проект и открыть защищённую сессию Tw")
     parser.add_argument("command", nargs="?", choices=["init", "chat"], default="chat")
     parser.add_argument("--project", type=Path, default=Path.cwd())
     parser.add_argument("--check")
     parser.add_argument("--model")
-    parser.add_argument("--backend", choices=["gemini", "codex"])
+    parser.add_argument("--backend", choices=list(BACKENDS))
+    try:
+        validate_cli_backend_flags(arguments)
+    except ValueError as error:
+        parser.exit(1, f"tw: {error}\n")
+    if command not in {"init", "chat"}:
+        harness_main(arguments)
+        return
     args = parser.parse_args(arguments)
     try:
         from .projects import Projects
@@ -246,10 +380,11 @@ def main(argv=None):
         register_project(root)
         verified_setup_paths(root)
         config = json.loads((root / ".harness/config.json").read_text())
-        doctor(config if config.get("backend") == "gemini" else config["codex"])
+        selected_backend = validate_backend(config.get("backend", "codex"))
+        doctor(config if selected_backend == "gemini" else config["codex"])
         launch = chat_command(root)
         verify_servers(launch)
-        engine = "Gemini" if config.get("backend") == "gemini" else "Codex"
+        engine = "Gemini" if selected_backend == "gemini" else "Codex"
         print(f"Tw: {engine} + skill tw + контроллер. Задачи исполняются внешним worker; исходник в чате только для чтения.", flush=True)
         os.execvpe(launch[0], launch, safe_env())
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
