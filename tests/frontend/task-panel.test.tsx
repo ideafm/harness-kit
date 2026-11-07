@@ -149,7 +149,7 @@ it('без trusted widget не предлагает обход через отд
  expect(post).not.toHaveBeenCalled()
 })
 
-it('поиск, фильтр и страницы не меняют выбранную задачу в URL',async()=>{
+it('поиск и фильтр не меняют выбранную задачу в URL',async()=>{
  const tasks=Array.from({length:7},(_,index)=>({id:index+1,state:index===6?'backlog':'running',stage:'implement',updated:1,request:'Задача '+(index+1),artifacts:[]}))
  window.history.replaceState(null,'','/?project=main&task=1')
  const get=vi.fn().mockImplementation(async(path:string)=>{
@@ -161,13 +161,11 @@ it('поиск, фильтр и страницы не меняют выбран�
  })
  render(<TaskPanel transport={{get,post:vi.fn()} as Transport}/>)
  await screen.findByRole('button',{name:'#1 Задача 1'})
- fireEvent.click(screen.getByRole('button',{name:'Далее'}))
  expect(screen.getByRole('button',{name:'#7 Задача 7'})).toBeTruthy()
  fireEvent.click(screen.getByRole('button',{name:'Обновить'}))
  await vi.waitFor(()=>expect(get.mock.calls.filter(([path])=>path.endsWith('/status')).length).toBeGreaterThan(1))
- expect(screen.getByText('2 / 2')).toBeTruthy()
  fireEvent.click(screen.getByRole('button',{name:'Бэклог'}))
- expect(screen.getByText('1 / 1')).toBeTruthy()
+ expect(screen.getByRole('button',{name:'#7 Задача 7'})).toBeTruthy()
  expect(screen.queryByRole('button',{name:'#6 Задача 6'})).toBeNull()
  expect(new URLSearchParams(window.location.search).get('task')).toBe('1')
  fireEvent.change(screen.getByLabelText('Поиск задач'),{target:{value:'Несуществующая'}})
@@ -211,7 +209,7 @@ it.each(['checks','review'])('открывает %s при ожидании пр
  expect(disclosure?.open).toBe(true)
 })
 
-it('открывает страницу выбранной по URL задачи и убирает Markdown только из заголовка',async()=>{
+it('открывает выбранную по URL задачу и убирает Markdown только из заголовка',async()=>{
  const tasks=Array.from({length:7},(_,index)=>({id:index+1,state:'running',stage:'implement',updated:1,request:'# Задача '+(index+1)+'\n<script>текст</script>',artifacts:[]}))
  window.history.replaceState(null,'','/?project=main&task=7')
  const get=vi.fn().mockImplementation(async(path:string)=>{
@@ -223,12 +221,9 @@ it('открывает страницу выбранной по URL задачи
  })
  render(<TaskPanel transport={{get,post:vi.fn()} as Transport}/>)
  await screen.findByRole('button',{name:'#7 Задача 7'})
- expect(screen.getByText('2 / 2')).toBeTruthy()
  expect(screen.getByRole('heading',{name:'Задача 7'})).toBeTruthy()
- fireEvent.click(screen.getByRole('button',{name:'Назад'}))
  fireEvent.click(screen.getByRole('button',{name:'Обновить'}))
  await vi.waitFor(()=>expect(get.mock.calls.filter(([path])=>path.endsWith('/status')).length).toBeGreaterThan(1))
- expect(screen.getByText('1 / 2')).toBeTruthy()
  await userEvent.setup().click(screen.getByRole('tab',{name:'Исходная задача'}))
  expect(screen.getByRole('tabpanel').textContent).toBe(tasks[6].request)
  expect(document.querySelector('script')).toBeNull()
