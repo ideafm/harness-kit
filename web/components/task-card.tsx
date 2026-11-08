@@ -146,7 +146,10 @@ export function TaskCard({
           <span className="text-zinc-300 dark:text-zinc-700">·</span>
 
           {/* Branch Pill (dimmed if branch not yet created) */}
-          <div className={`flex items-center gap-1 text-[11px] font-mono ${hasBranch ? 'text-zinc-500' : 'opacity-40 pointer-events-none cursor-not-allowed text-zinc-400'}`}>
+          <div
+            className={`flex items-center gap-1 text-[11px] font-mono ${hasBranch ? 'text-zinc-500' : 'opacity-40 text-zinc-400'}`}
+            title={hasBranch ? `Ветка задачи: ${branchName}` : 'Ветка ещё не инициализирована контроллером'}
+          >
             <GitBranch className="w-3 h-3 text-zinc-400" />
             <span className="truncate max-w-[220px]">{branchName}</span>
           </div>
@@ -175,10 +178,10 @@ export function TaskCard({
             <span>{taskStateLabel(task)}</span>
           </div>
 
-          {/* Delete button (no backend data/API -> disabled with opacity-40 and pointer-events-none) */}
+          {/* Delete button (no backend data/API -> disabled with opacity-40 and cursor-not-allowed) */}
           <button
             disabled
-            className="p-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-40 pointer-events-none cursor-not-allowed"
+            className="p-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-40 cursor-not-allowed"
             title="Удаление задач не поддерживается API"
           >
             <Trash2 className="w-3.5 h-3.5" />
@@ -346,9 +349,9 @@ export function TaskCard({
               className={`w-full px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800/80 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-xs font-mono transition-colors flex items-center justify-center gap-1.5 ${
                 hasBranch
                   ? 'text-zinc-600 dark:text-zinc-400 cursor-pointer'
-                  : 'opacity-40 pointer-events-none cursor-not-allowed text-zinc-400'
+                  : 'opacity-40 cursor-not-allowed text-zinc-400'
               }`}
-              title={hasBranch ? 'Скопировать git checkout ветки' : 'Ветка ещё не инициализирована'}
+              title={hasBranch ? 'Скопировать git checkout ветки' : 'Ветка ещё не инициализирована контроллером'}
             >
               {copiedBranch ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <GitBranch className="w-3 h-3 text-zinc-400" />}
               <span>{copiedBranch ? 'Скопировано!' : 'git branch'}</span>

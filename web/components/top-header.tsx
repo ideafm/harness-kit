@@ -188,20 +188,6 @@ export function TopHeader({
           <span className="text-[10px] font-mono opacity-75">:47831</span>
         </div>
 
-        {/* CLI Terminal Toggle */}
-        <button
-          type="button"
-          onClick={onToggleTerminal}
-          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-medium border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
-          title="Открыть консоль воркера"
-        >
-          <span className="text-zinc-400 font-bold">&gt;_</span>
-          <span>Терминал</span>
-          <span className="text-[9px] px-1 py-0.2 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-400 font-sans">
-            CLI
-          </span>
-        </button>
-
         {/* Refresh Button */}
         <button
           type="button"

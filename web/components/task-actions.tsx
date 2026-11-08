@@ -262,8 +262,10 @@ export function TaskActions({
         </div>
       )}
 
-      {!modalAnswer && (
-        <p role="status">{busy ? 'Ожидаем подтверждения контроллера…' : message}</p>
+      {(!modalAnswer || !dialogOpen) && (
+        <p role="status" className="text-xs text-zinc-500">
+          {busy ? 'Ожидаем подтверждения контроллера…' : message}
+        </p>
       )}
     </div>
   )

@@ -47,7 +47,6 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
         setIsCommandPaletteOpen(prev => !prev)
       } else if ((e.metaKey || e.ctrlKey) && (e.key === '`' || e.key === '~' || e.key === 'ё' || e.key === 'Ё')) {
         e.preventDefault()
-        setIsTerminalOpen(prev => !prev)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -139,15 +138,15 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setIsTerminalOpen(true)}
-            className="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-700 text-xs font-mono shadow-2xs flex items-center gap-1.5 cursor-pointer transition-colors"
-            title="Открыть консоль воркера"
+            disabled
+            className="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900/60 text-zinc-400 dark:text-zinc-500 text-xs font-mono shadow-2xs flex items-center gap-1.5 cursor-not-allowed opacity-60"
+            title="Интерактивный терминал пока не поддерживается в Harness Kit"
           >
-            <span className="text-blue-600 dark:text-blue-400 font-bold">&gt;_</span>
+            <span className="font-bold opacity-70">&gt;_</span>
             <span>Терминал воркера</span>
-            <kbd className="text-[10px] px-1 py-0.2 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-400 border border-zinc-200 dark:border-zinc-700">
-              Ctrl+`
-            </kbd>
+            <span className="text-[10px] font-sans px-1.5 py-0.2 rounded bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500">
+              скоро
+            </span>
           </button>
 
           <CreateTaskSheet 

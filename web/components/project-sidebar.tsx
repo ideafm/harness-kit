@@ -253,7 +253,7 @@ export function ProjectSidebar({
         </div>
 
         <div 
-          className="p-2 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 opacity-40 cursor-not-allowed pointer-events-none select-none shadow-2xs"
+          className="p-2 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 opacity-70 cursor-not-allowed select-none shadow-2xs"
           title="Интерактивное управление воркером в веб-панели отключено"
         >
           <div className="flex items-center justify-between">

@@ -49,7 +49,7 @@ export function CreateTaskSheet({
   const [text, setText] = useState(restored?.body.request ?? '')
   const [mode, setMode] = useState(restored?.body.approval_mode ?? 'approve-plan')
   const [model, setModel] = useState('codex')
-  const [autoStart, setAutoStart] = useState(true)
+  const [autoStart, setAutoStart] = useState(restored?.body.placement ? restored.body.placement !== 'backlog' : true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const pending = useRef<PendingCreation | undefined>(restored)
@@ -223,6 +223,12 @@ export function CreateTaskSheet({
               <p className="muted text-[11px] text-zinc-500">
                 Auto не предоставляет модели человеческих полномочий приёмки или доступа.
               </p>
+            )}
+
+            {Boolean(pending.current) && (
+              <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+                Ожидается подтверждение предыдущего создания задачи. Нажмите «Создать задачу» для повтора запроса с сохранёнными параметрами.
+              </div>
             )}
 
             {error && (
