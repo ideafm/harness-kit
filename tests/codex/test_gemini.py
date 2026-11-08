@@ -596,6 +596,104 @@ print('node-sandbox-ok')
         with self.assertRaisesRegex(ValueError, "Неподдерживаемый backend"):
             invalid_backend.check(starting=True)
 
+    def test_normalize_gemini_extracts_buckets_and_handles_timestamps(self):
+        from harness.quota import normalize_gemini
+        now = 1000.0
+        payload = {
+            "command": {
+                "name": "usage",
+                "data": {
+                    "groups": [
+                        {
+                            "name": "Gemini Models",
+                            "buckets": [
+                                {
+                                    "window": "5h",
+                                    "remaining_fraction": 0.88,
+                                    "reset_time": "2026-11-08T14:59:12Z",
+                                },
+                                {
+                                    "window": "weekly",
+                                    "remaining_fraction": 0.05,
+                                    "reset_time": "2026-11-14T10:35:40Z",
+                                },
+                            ],
+                        }
+                    ]
+                },
+            }
+        }
+        res = normalize_gemini(payload, now)
+        self.assertEqual(len(res["windows"]), 2)
+        win_5h = next(w for w in res["windows"] if w["window_minutes"] == 300)
+        win_w = next(w for w in res["windows"] if w["window_minutes"] == 10080)
+        self.assertEqual(win_5h["used_percent"], 12.0)
+        self.assertEqual(win_w["used_percent"], 95.0)
+
+        # Naive datetime without timezone must be rejected
+        naive_payload = {
+            "command": {
+                "name": "usage",
+                "data": {
+                    "groups": [
+                        {
+                            "name": "Gemini Models",
+                            "buckets": [
+                                {"window": "5h", "remaining_fraction": 0.88, "reset_time": "2026-11-08T14:59:12"},
+                                {"window": "weekly", "remaining_fraction": 0.05, "reset_time": "2026-11-14T10:35:40Z"},
+                            ],
+                        }
+                    ]
+                },
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "должно содержать часовой пояс"):
+            normalize_gemini(naive_payload, now)
+
+        # Explicit offset timezone is accepted
+        offset_payload = {
+            "command": {
+                "name": "usage",
+                "data": {
+                    "groups": [
+                        {
+                            "name": "Gemini Models",
+                            "buckets": [
+                                {"window": "5h", "remaining_fraction": 0.88, "reset_time": "2026-11-08T17:59:12+03:00"},
+                                {"window": "weekly", "remaining_fraction": 0.05, "reset_time": "2026-11-14T10:35:40Z"},
+                            ],
+                        }
+                    ]
+                },
+            }
+        }
+        res_offset = normalize_gemini(offset_payload, now)
+        self.assertEqual(len(res_offset["windows"]), 2)
+
+    def test_gemini_quota_ttl_120_seconds_and_isolation_from_codex(self):
+        now = time.time()
+        ok_gemini = {
+            "observed_at": now,
+            "windows": [{"used_percent": 10.0, "resets_at": now + 3600, "window_minutes": 300}],
+            "ordinary_usage_allowed": True,
+        }
+        guard = Guard(self.store, {**self.config, "codex": "/usr/local/bin/codex", "quota_guard": True})
+        with patch("harness.quota.read", return_value=ok_gemini) as mock_read:
+            guard.check(starting=True, backend="gemini")
+            self.assertEqual(mock_read.call_count, 1)
+            guard.check(starting=False, backend="gemini")
+            self.assertEqual(mock_read.call_count, 1)
+
+        high_codex = {
+            "observed_at": now,
+            "windows": [{"used_percent": 96.0, "resets_at": now + 3600, "window_minutes": 300}],
+            "ordinary_usage_allowed": True,
+        }
+        guard.snapshots["codex"] = high_codex
+        guard.check(starting=False, backend="gemini")
+        with self.assertRaises(QuotaPause):
+            guard.check(starting=False, backend="codex")
+
     def test_tw_connect_and_flag_switch_backend_on_existing_project(self):
         atomic_json(
             self.root / ".harness/config.json",

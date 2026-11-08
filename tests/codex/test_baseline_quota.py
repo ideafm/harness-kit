@@ -113,13 +113,13 @@ class QuotaTests(unittest.TestCase):
 
     def test_new_stage_stops_at_90_and_active_at_94(self):
         guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
-        with patch('harness.quota.read', return_value=self.snapshot(90)):
+        with patch('harness.quota.read', return_value=self.snapshot(95)):
             with self.assertRaises(QuotaPause) as error:
                 guard.check(starting=True)
             self.assertEqual(error.exception.retry_at, self.now + 3660)
-        guard.snapshot = self.snapshot(93)
+        guard.snapshot = self.snapshot(94.9)
         guard.check()
-        guard.snapshot = self.snapshot(94)
+        guard.snapshot = self.snapshot(95)
         with self.assertRaises(QuotaPause):
             guard.check()
 
@@ -138,11 +138,22 @@ class QuotaTests(unittest.TestCase):
             guard.check(starting=True)
             fetch.assert_called_once()
 
+    def test_codex_snapshot_ttl_120_seconds(self):
+        guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
+        with patch('harness.quota.read', return_value=self.snapshot(2)) as fetch:
+            guard.check(starting=True)
+            self.assertEqual(fetch.call_count, 1)
+            guard.check(starting=False)
+            self.assertEqual(fetch.call_count, 1)
+            guard.snapshots['codex']['observed_at'] -= 121
+            guard.check(starting=False)
+            self.assertEqual(fetch.call_count, 2)
+
     def test_wait_survives_restart_and_does_not_spend_attempts(self):
         config = {'codex': 'codex', 'check': ['python3'], 'timeout': 10, 'max_attempts': 3, 'quota_guard': True}
         atomic_json(self.store.home / 'config.json', config)
         backend = fixtures.FakeCodex()
-        with patch('harness.quota.read', return_value=self.snapshot(90)):
+        with patch('harness.quota.read', return_value=self.snapshot(95)):
             Runner(self.store, backend=backend).run(1)
         task = self.store.get(1)
         self.assertEqual(task['state'], 'rate_limited')
@@ -209,7 +220,7 @@ class QuotaTests(unittest.TestCase):
 
     def test_invalid_user_cap_fails_closed(self):
         guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
-        for cap in (True, 0, 95, '50'):
+        for cap in (True, 0, 96, '50'):
             with self.subTest(cap=cap):
                 atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': cap})
                 with self.assertRaises(QuotaPause):
@@ -232,7 +243,7 @@ class QuotaTests(unittest.TestCase):
     def test_next_window_checkpoint_keeps_current_safety_ceiling(self):
         atomic_json(self.store.home / 'quota-policy.json', {'stop_percent': 30, 'activate_at': self.now + 3600})
         guard = Guard(self.store, {'codex': 'codex', 'quota_guard': True})
-        with patch('harness.quota.read', return_value=self.snapshot(90)):
+        with patch('harness.quota.read', return_value=self.snapshot(95)):
             with self.assertRaises(QuotaPause) as error:
                 guard.check(starting=True)
         self.assertFalse(error.exception.manual)
