@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from .cli import main as harness_main
+from .gemini import validate_stage_settings, verify_agy_contract
 from .security import BACKENDS, doctor, permission_args, profile, safe_env, seatbelt_profile, toml, validate_backend
 from .service import KIT, TaskService
 from .state import atomic_json
@@ -125,23 +126,16 @@ def chat_command(root, headless=False, prompt=None):
     server = {"command": str(Path(sys.executable).resolve()), "args": [str(KIT / "bin/tw-mcp"), "--project", str(root)],
               "required": True, "default_tools_approval_mode": "auto", "startup_timeout_sec": 20}
     if backend == "gemini":
+        from .gemini import stage_settings
         agy = config.get("agy") or "agy"
         if not isinstance(agy, str) or not agy.strip():
             raise RuntimeError("Не задан исполняемый файл Gemini (agy)")
-        settings = {
-            "workspace": str(root),
-            "sandbox": True,
-            "mode": "plan",
-            "ignoreUserConfig": bool(headless),
-            "mcpServers": {"tw": server},
-            "permissions": {"harness": profile(root, False), "default": "harness"},
-            "seatbeltProfile": seatbelt_profile(root, False),
-        }
+        settings = stage_settings(root, False)
         command = [
             agy,
             "--sandbox",
             "--mode",
-            "plan",
+            "accept-edits",
             "--disable-slash-commands",
             "--settings",
             json.dumps(settings, sort_keys=True),
@@ -149,7 +143,7 @@ def chat_command(root, headless=False, prompt=None):
         if config.get("model"):
             command += ["--model", config["model"]]
         if headless:
-            command += ["--output-format", "json", "-p", prompt or default_prompt]
+            command += ["--input-format", "stream-json", "--output-format", "stream-json", "-p", prompt or default_prompt]
         else:
             command += [prompt or default_prompt]
         return command
@@ -171,11 +165,15 @@ def chat_command(root, headless=False, prompt=None):
 
 
 def verify_gemini_servers(command):
+    if any(token in {"--dangerously-skip-permissions", "-c", "--continue"} for token in command):
+        raise RuntimeError("Команда Gemini содержит запрещённый аргумент CLI")
     if "--sandbox" not in command or "--mode" not in command:
-        raise RuntimeError("Сессия Gemini требует read-only режим --sandbox и --mode plan")
+        raise RuntimeError("Сессия Gemini требует read-only режим и --sandbox")
+    if "--disable-slash-commands" not in command:
+        raise RuntimeError("Сессия Gemini требует --disable-slash-commands")
     mode_index = command.index("--mode") + 1
-    if mode_index >= len(command) or command[mode_index] != "plan":
-        raise RuntimeError("Сессия Gemini в чате должна запускаться только в read-only режиме plan")
+    if mode_index >= len(command) or command[mode_index] != "accept-edits":
+        raise RuntimeError("Сессия Gemini должна запускаться в режиме accept-edits с read-only правилами permissions.deny")
     if "--settings" not in command:
         raise RuntimeError("Сессия Gemini требует изолированных настроек --settings")
     settings_index = command.index("--settings") + 1
@@ -185,59 +183,11 @@ def verify_gemini_servers(command):
         settings = json.loads(command[settings_index])
     except json.JSONDecodeError as error:
         raise RuntimeError("Некорректный JSON в --settings") from error
-    workspace = settings.get("workspace")
-    permissions = (settings.get("permissions") or {}).get("harness") or {}
-    filesystem = permissions.get("filesystem") or {}
-    ws_policy = filesystem.get(str(Path(workspace).resolve()) if workspace else "") or {}
-    mcp_servers = settings.get("mcpServers") or {}
-    tw_server = mcp_servers.get("tw") or {}
-    if ws_policy.get(".") != "read" or not settings.get("sandbox") or not tw_server.get("required"):
-        raise RuntimeError("Команда Gemini не содержит read-only профиль и обязательный MCP-сервер tw")
+    validate_stage_settings(settings, False)
     headless = "-p" in command or "--print" in command
-    if headless and not settings.get("ignoreUserConfig"):
-        raise RuntimeError("Headless Tw требует изоляции пользовательской конфигурации")
-    raw_options = command[1:-2] if headless and len(command) >= 3 and command[-2] in {"-p", "--print"} else command[1:-1]
-    options = []
-    skip_next = False
-    for index, token in enumerate(raw_options):
-        if skip_next:
-            skip_next = False
-            continue
-        if token == "--output-format":
-            skip_next = True
-            continue
-        if token in {"-p", "--print"}:
-            continue
-        options.append(token)
-    for attempt in range(2):
-        result = subprocess.run([command[0], *options, "mcp", "list", "--json"], env=safe_env(),
-                                capture_output=True, text=True, timeout=30, check=True)
-        try:
-            entries = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError("Не удалось разобрать список MCP-серверов Gemini") from error
-        if not isinstance(entries, list):
-            raise RuntimeError("Некорректный формат списка MCP-серверов Gemini")
-        enabled = [entry["name"] for entry in entries if isinstance(entry, dict) and entry.get("enabled", True)]
-        if enabled == ["tw"]:
-            return
-        if attempt or "tw" not in enabled:
-            break
-        for name in enabled:
-            if name != "tw":
-                if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
-                    raise RuntimeError("Имя MCP не поддерживает безопасное отключение")
-                settings["mcpServers"][name] = {"enabled": False}
-                override = ["-c", "mcp_servers." + name + ".enabled=false"]
-                options.extend(override)
-                if not headless:
-                    command[-1:-1] = override
-        updated_settings = json.dumps(settings, sort_keys=True)
-        if "--settings" in options:
-            options[options.index("--settings") + 1] = updated_settings
-        if not headless:
-            command[command.index("--settings") + 1] = updated_settings
-    raise RuntimeError("Не удалось изолировать MCP: включены посторонние серверы. Сессия не запущена.")
+    if headless and ("--input-format" not in command or "--output-format" not in command):
+        raise RuntimeError("Headless сессия Gemini требует --input-format stream-json и --output-format stream-json")
+    verify_agy_contract(command[0])
 
 
 def verify_servers(command):

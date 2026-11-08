@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import tempfile
 import time
 import uuid
 from contextlib import contextmanager
@@ -7,6 +8,7 @@ from pathlib import Path
 
 
 STATES = {"backlog", "queued", "running", "waiting", "awaiting_approval", "rate_limited", "paused", "blocked", "review", "accepted", "rejected"}
+STAGE_KEYS = ("plan", "implement", "check", "review")
 
 
 class StateChanged(RuntimeError):
@@ -62,22 +64,51 @@ class Store:
         if (stat.st_dev, stat.st_ino) != self.identity:
             raise RuntimeError("Экземпляр проекта заменён; перезапустите контроллер")
 
-    def add(self, request, approval_mode="auto", placement='queue', backend=None):
+    def add(self, request, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None):
         from .approval import validate_mode
-        from .security import validate_backend
+        from .security import normalize_scope, validate_backend
         validate_mode(approval_mode)
         if placement not in ('queue', 'backlog'):
             raise ValueError('Нужно выбрать queue или backlog')
+        config_data = json.loads((self.home / "config.json").read_text()) if (self.home / "config.json").is_file() else {}
         if backend is not None:
             selected_backend = validate_backend(backend)
-        elif (self.home / "config.json").is_file():
-            config_data = json.loads((self.home / "config.json").read_text())
-            selected_backend = validate_backend(config_data.get("backend", "codex"))
         else:
-            selected_backend = "codex"
+            selected_backend = validate_backend(config_data.get("backend", "codex"))
+        validated_stage_backends = None
+        raw_stage_backends = stage_backends if stage_backends is not None else config_data.get("stage_backends")
+        if raw_stage_backends is not None:
+            if not isinstance(raw_stage_backends, dict):
+                raise ValueError("stage_backends должен быть словарём этапов")
+            validated_stage_backends = {}
+            for stage_name, stage_backend in raw_stage_backends.items():
+                if stage_name not in STAGE_KEYS:
+                    raise ValueError(f"Неизвестный этап в stage_backends: {stage_name}")
+                validated_stage_backends[stage_name] = validate_backend(stage_backend)
+        validated_stage_models = None
+        raw_stage_models = stage_models if stage_models is not None else config_data.get("stage_models")
+        if raw_stage_models is not None:
+            if not isinstance(raw_stage_models, dict):
+                raise ValueError("stage_models должен быть словарём этапов")
+            validated_stage_models = {}
+            for stage_name, stage_model in raw_stage_models.items():
+                if stage_name not in STAGE_KEYS or not isinstance(stage_model, str):
+                    raise ValueError(f"Некорректная модель этапа в stage_models: {stage_name}")
+                validated_stage_models[stage_name] = stage_model
+        normalized_scope = normalize_scope(scope if scope is not None else config_data.get("path_scope") or config_data.get("scope"))
         self.ensure_current()
         with self.transaction():
             data = {"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode, "backend": selected_backend}
+            if validated_stage_backends:
+                data["stage_backends"] = validated_stage_backends
+            if model is not None:
+                if not isinstance(model, str):
+                    raise ValueError("model должен быть строкой")
+                data["model"] = model
+            if validated_stage_models:
+                data["stage_models"] = validated_stage_models
+            if normalized_scope:
+                data["path_scope"] = normalized_scope
             if placement == 'queue':
                 data['queue_order'] = self.next_queue_order()
             row = self.db.execute(
@@ -85,7 +116,12 @@ class Store:
                 ('backlog' if placement == 'backlog' else 'queued', "plan", json.dumps(data), time.time()),
             )
             ident = row.lastrowid
-            self.event(ident, "created", {"request": request, "approval_mode": approval_mode, 'placement': placement, "backend": selected_backend})
+            event_detail = {"request": request, "approval_mode": approval_mode, 'placement': placement, "backend": selected_backend}
+            if validated_stage_backends:
+                event_detail["stage_backends"] = validated_stage_backends
+            if normalized_scope:
+                event_detail["path_scope"] = normalized_scope
+            self.event(ident, "created", event_detail)
         return self.get(ident)
 
     def next_queue_order(self):
@@ -158,9 +194,22 @@ class Store:
         return [dict(r) | {"data": json.loads(r["data"])} for r in self.db.execute(
             "SELECT * FROM events WHERE task=? ORDER BY id", (ident,))]
 
+    def git_toplevel(self):
+        candidates = [parent for parent in (self.root, *list(self.root.parents)[:3]) if (parent / ".git").exists()]
+        return candidates[-1] if candidates else self.root
+
+    def external_tasks_root(self):
+        from .projects import project_id
+        toplevel = self.git_toplevel()
+        base = toplevel.parent if toplevel.parent != toplevel else Path(tempfile.gettempdir()).resolve()
+        return base / f"{toplevel.name}-harness-tasks" / f"{project_id(self.root)}-{self.identity[1]}" / "tasks"
+
     def folder(self, ident):
         self.ensure_current()
-        path = self.home / "tasks" / f"TASK-{ident:03}"
+        legacy = self.home / "tasks" / f"TASK-{ident:03}"
+        if legacy.exists() or legacy.is_symlink():
+            return legacy
+        path = self.external_tasks_root() / f"TASK-{ident:03}"
         path.mkdir(parents=True, exist_ok=True)
         return path
 

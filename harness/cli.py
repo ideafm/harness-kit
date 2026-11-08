@@ -31,6 +31,7 @@ def parser():
     add.add_argument("request")
     add.add_argument("--approval", choices=MODES, default="auto")
     add.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
+    add.add_argument("--scope", default=None, help="Каталог scope внутри монорепозитория")
     add.add_argument('--backlog', action='store_true', help='Сохранить без разрешения на выполнение')
     enqueue = sub.add_parser('enqueue', help='Добавить выбранные задачи в очередь в указанном порядке')
     enqueue.add_argument('tasks', nargs='+', type=task_id)
@@ -185,7 +186,8 @@ def dispatch_store(args, store):
             raise ValueError("Пустая задача")
         print(summary(store.add(args.request, getattr(args, "approval", "auto"),
             'backlog' if getattr(args, 'backlog', False) else 'queue',
-            backend=getattr(args, "backend", None))))
+            backend=getattr(args, "backend", None),
+            scope=getattr(args, "scope", None))))
     elif action == 'enqueue':
         from .service import TaskService
         service = TaskService(store.root)

@@ -12,11 +12,22 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from harness.cli import main as cli_main
-from harness.gemini import Gemini, extract_json_payload, run_sdk, run_workspace_command
+from harness.gemini import (
+    Gemini,
+    SUPPORTED_AGY_VERSIONS,
+    VERIFIED_SETTINGS_KEYS,
+    extract_json_payload,
+    format_stream_input,
+    run_sdk,
+    run_workspace_command,
+    stage_settings,
+    validate_stage_settings,
+    verify_agy_contract,
+)
 from harness.node import command as node_command
 from harness.quota import Guard, QuotaPause
 from harness.runner import Codex, RateLimited, Runner, create_backend
-from harness.security import sandbox_command, seatbelt_profile
+from harness.security import normalize_scope, path_in_scope, sandbox_command, seatbelt_profile
 from harness.service import TaskService
 from harness.state import Store, atomic_json
 from harness.tw import chat_command, connect, main as tw_main, verify_servers
@@ -323,6 +334,27 @@ print('node-sandbox-ok')
         self.assertEqual(extract_json_payload(json.dumps(envelope)), expected)
         string_envelope = {"status": "ok", "response": json.dumps(expected)}
         self.assertEqual(extract_json_payload("log line\n" + json.dumps(string_envelope)), expected)
+        stream_result = {
+            "type": "result",
+            "status": "DONE",
+            "structured_output": expected,
+            "response": json.dumps(expected),
+        }
+        self.assertEqual(
+            extract_json_payload(
+                json.dumps({"type": "system", "subtype": "init"}) + "\n" + json.dumps(stream_result)
+            ),
+            expected,
+        )
+        stream_finish = {
+            "type": "step_update",
+            "status": "DONE",
+            "step": {"step": {"finish": {"structuredOutput": json.dumps(expected)}}},
+        }
+        self.assertEqual(extract_json_payload(json.dumps(stream_finish)), expected)
+        stream_error = {"type": "result", "status": "ERROR", "error": "sandbox tool denied"}
+        with self.assertRaisesRegex(RuntimeError, "sandbox tool denied"):
+            extract_json_payload(json.dumps(stream_error))
         with self.assertRaises(ValueError):
             extract_json_payload("not json")
 
@@ -336,35 +368,106 @@ print('node-sandbox-ok')
                 patch("harness.gemini.sdk_available", return_value=False):
             with self.assertRaisesRegex(RuntimeError, "не найден"):
                 adapter.preflight()
+        with patch("harness.gemini.doctor", return_value="ok"), \
+                patch("harness.gemini.resolve_agy", return_value="/usr/bin/agy"), \
+                patch("harness.gemini.verify_agy_contract", side_effect=RuntimeError("Неподдерживаемая версия agy")):
+            with self.assertRaisesRegex(RuntimeError, "Неподдерживаемая версия agy"):
+                adapter.preflight()
 
-    def test_gemini_cli_call_does_not_wrap_client_in_network_blocking_sandbox_and_passes_workspace_settings(self):
+    def test_verify_agy_contract_fails_closed_on_unsupported_version_or_missing_flags(self):
+        bad_ver = Mock(returncode=0, stdout="1.4.0\n", stderr="")
+        with patch("harness.gemini.subprocess.run", return_value=bad_ver):
+            with self.assertRaisesRegex(RuntimeError, "Неподдерживаемая версия"):
+                verify_agy_contract("/usr/bin/agy")
+
+        ok_ver = Mock(returncode=0, stdout=f"{SUPPORTED_AGY_VERSIONS[0]}\n", stderr="")
+        missing_flag_help = Mock(returncode=0, stdout="--mode --settings --json-schema", stderr="")
+        with patch("harness.gemini.subprocess.run", side_effect=[ok_ver, missing_flag_help]):
+            with self.assertRaisesRegex(RuntimeError, "Контракт CLI/sandbox в установленном agy не подтверждён"):
+                verify_agy_contract("/usr/bin/agy")
+
+        full_help = Mock(
+            returncode=0,
+            stdout="--sandbox --mode --settings --disable-slash-commands --input-format --output-format --json-schema stream-json accept-edits",
+            stderr="",
+        )
+        with patch("harness.gemini.subprocess.run", side_effect=[ok_ver, full_help]):
+            self.assertEqual(verify_agy_contract("/usr/bin/agy")["version"], SUPPORTED_AGY_VERSIONS[0])
+
+    def test_stage_settings_only_uses_verified_keys_and_enforces_write_boundaries(self):
+        workspace = self.root
+        ro_settings = stage_settings(workspace, writable=False)
+        self.assertEqual(set(ro_settings.keys()), set(VERIFIED_SETTINGS_KEYS))
+        for forbidden in ("mcpServers", "workspace", "sandbox", "seatbeltProfile", "ignoreUserConfig", "mode"):
+            self.assertNotIn(forbidden, ro_settings)
+        self.assertIn("write_file(*)", ro_settings["permissions"]["deny"])
+        self.assertIn("mcp_*", ro_settings["permissions"]["deny"])
+        validate_stage_settings(ro_settings, writable=False)
+
+        with self.assertRaisesRegex(RuntimeError, "Неподдерживаемые ключи"):
+            validate_stage_settings({"permissions": ro_settings["permissions"], "mcpServers": {}}, writable=False)
+
+        rw_settings = stage_settings(workspace, writable=True, allowed_files=["web/src/app.tsx"], scope="web")
+        self.assertEqual(set(rw_settings.keys()), set(VERIFIED_SETTINGS_KEYS))
+        validate_stage_settings(rw_settings, writable=True)
+        self.assertNotIn("write_file(*)", rw_settings["permissions"]["deny"])
+        self.assertIn("write_file(/etc/*)", rw_settings["permissions"]["deny"])
+        self.assertIn("write_file(../**)", rw_settings["permissions"]["deny"])
+        self.assertIn("write_file(app.py)", rw_settings["permissions"]["deny"])
+
+        with self.assertRaisesRegex((ValueError, RuntimeError), "выходит за пределы"):
+            stage_settings(workspace, writable=True, allowed_files=["app.py"], scope="web")
+
+    def test_gemini_cli_call_uses_verified_flags_stream_json_and_fails_on_readonly_mutation(self):
         folder = self.store.folder(1)
         workspace = folder / "workspace"
         workspace.mkdir(parents=True)
+        (workspace / "app.py").write_text("x = 1\n")
         adapter = Gemini(self.config)
         expected = response(summary="Сводка от Gemini")
 
         def fake_execute(command, cwd, output, timeout, interrupted=None, input_text=None, env=None):
-            Path(output).write_text(json.dumps({"status": "completed", "response": expected}))
+            stream_line = json.dumps({"type": "result", "status": "DONE", "structured_output": expected})
+            Path(output).write_text(stream_line + "\n")
             return 0
 
         with patch("harness.gemini.resolve_agy", return_value="/usr/bin/agy"), \
+                patch("harness.gemini.verify_agy_contract", return_value="1.5.3"), \
                 patch("harness.gemini.execute", side_effect=fake_execute) as run_exec:
-            result = adapter.call("plan", workspace, folder, "prompt text", lambda: False)
+            result = adapter.call("plan", workspace, folder, "prompt text", lambda: False, scope=".")
         self.assertEqual(result["summary"], "Сводка от Gemini")
         self.assertTrue((folder / "plan.response.json").is_file())
         called_cmd = run_exec.call_args.args[0]
         self.assertEqual(called_cmd[0], "/usr/bin/agy")
         self.assertIn("--sandbox", called_cmd)
+        self.assertIn("--disable-slash-commands", called_cmd)
         self.assertIn("--mode", called_cmd)
-        self.assertEqual(called_cmd[called_cmd.index("--mode") + 1], "plan")
+        self.assertEqual(called_cmd[called_cmd.index("--mode") + 1], "accept-edits")
+        self.assertEqual(called_cmd[called_cmd.index("--input-format") + 1], "stream-json")
+        self.assertEqual(called_cmd[called_cmd.index("--output-format") + 1], "stream-json")
         self.assertIn("--settings", called_cmd)
         settings = json.loads(called_cmd[called_cmd.index("--settings") + 1])
-        self.assertEqual(settings["workspace"], str(workspace.resolve()))
-        self.assertTrue(settings["sandbox"])
-        self.assertIn("(deny default)", settings["seatbeltProfile"])
+        self.assertEqual(set(settings.keys()), {"permissions"})
+        self.assertIn("write_file(*)", settings["permissions"]["deny"])
         self.assertIn("--json-schema", called_cmd)
         self.assertIn("gemini-4-argon", called_cmd)
+        self.assertEqual(called_cmd[-2:], ["-p", ""])
+
+        sent_stdin = run_exec.call_args.args[5]
+        stdin_payload = json.loads(sent_stdin.strip())
+        self.assertEqual(stdin_payload["event"], "user")
+        self.assertIn("prompt text", stdin_payload["message"]["content"])
+
+        def mutating_execute(command, cwd, output, timeout, interrupted=None, input_text=None, env=None):
+            (workspace / "app.py").write_text("x = 2\n")
+            Path(output).write_text(json.dumps({"type": "result", "status": "DONE", "structured_output": expected}))
+            return 0
+
+        with patch("harness.gemini.resolve_agy", return_value="/usr/bin/agy"), \
+                patch("harness.gemini.verify_agy_contract", return_value="1.5.3"), \
+                patch("harness.gemini.execute", side_effect=mutating_execute):
+            with self.assertRaisesRegex(RuntimeError, "была изменена на read-only этапе"):
+                adapter.call("plan", workspace, folder, "prompt text", lambda: False)
 
     def test_gemini_rate_limit_markers_raise_rate_limited(self):
         folder = self.store.folder(1)
@@ -377,9 +480,10 @@ print('node-sandbox-ok')
             return 1
 
         with patch("harness.gemini.resolve_agy", return_value="/usr/bin/agy"), \
+                patch("harness.gemini.verify_agy_contract", return_value="1.5.3"), \
                 patch("harness.gemini.execute", side_effect=fake_execute):
             with self.assertRaises(RateLimited):
-                adapter.call("implement", workspace, folder, "prompt", lambda: False)
+                adapter.call("implement", workspace, folder, "prompt", lambda: False, allowed_files=["app.py"])
 
     def test_gemini_sdk_boundary_passes_workspace_and_isolates_workspace_commands(self):
         folder = self.store.folder(1)
@@ -500,61 +604,48 @@ print('node-sandbox-ok')
         cmd = chat_command(self.root, headless=False, prompt="check status")
         self.assertEqual(cmd[0], "/usr/bin/agy")
         self.assertIn("--sandbox", cmd)
+        self.assertIn("--disable-slash-commands", cmd)
         self.assertIn("--mode", cmd)
-        self.assertEqual(cmd[cmd.index("--mode") + 1], "plan")
+        self.assertEqual(cmd[cmd.index("--mode") + 1], "accept-edits")
         self.assertIn("--settings", cmd)
+        settings = json.loads(cmd[cmd.index("--settings") + 1])
+        self.assertEqual(set(settings.keys()), {"permissions"})
+        self.assertIn("write_file(*)", settings["permissions"]["deny"])
+        self.assertIn("mcp_*", settings["permissions"]["deny"])
         self.assertIn("gemini-4-argon", cmd)
         self.assertEqual(cmd[-1], "check status")
 
-        only_tw = Mock(stdout=json.dumps([{"name": "tw", "enabled": True}]))
-        with patch("harness.tw.subprocess.run", return_value=only_tw) as run_mcp:
+        with patch("harness.tw.verify_agy_contract", return_value="1.5.3") as check_contract:
             verify_servers(cmd)
-        run_mcp.assert_called_once()
-
-        foreign_always = Mock(
-            stdout=json.dumps([{"name": "tw", "enabled": True}, {"name": "foreign", "enabled": True}])
-        )
-        with patch("harness.tw.subprocess.run", return_value=foreign_always):
-            with self.assertRaisesRegex(RuntimeError, "посторонние"):
-                verify_servers(chat_command(self.root, headless=True, prompt="status"))
-
-        initial = Mock(
-            stdout=json.dumps([{"name": "foreign-srv", "enabled": True}, {"name": "tw", "enabled": True}])
-        )
-        isolated = Mock(
-            stdout=json.dumps([{"name": "foreign-srv", "enabled": False}, {"name": "tw", "enabled": True}])
-        )
-        interactive_cmd = chat_command(self.root, headless=False, prompt="status")
-        with patch("harness.tw.subprocess.run", side_effect=[initial, isolated]) as run_recheck:
-            verify_servers(interactive_cmd)
-        self.assertEqual(run_recheck.call_count, 2)
-        self.assertIn("mcp_servers.foreign-srv.enabled=false", interactive_cmd)
-        updated_settings = json.loads(interactive_cmd[interactive_cmd.index("--settings") + 1])
-        self.assertEqual(updated_settings["mcpServers"]["foreign-srv"], {"enabled": False})
-        self.assertEqual(interactive_cmd[-1], "status")
+        check_contract.assert_called_once_with("/usr/bin/agy")
 
         headless_cmd = chat_command(self.root, headless=True, prompt="headless status")
         self.assertIn("--output-format", headless_cmd)
-        self.assertIn("json", headless_cmd)
-        with patch("harness.tw.subprocess.run", return_value=only_tw):
+        self.assertIn("stream-json", headless_cmd)
+        self.assertNotIn("-c", headless_cmd)
+        with patch("harness.tw.verify_agy_contract", return_value="1.5.3"):
             verify_servers(headless_cmd)
 
         tampered = list(headless_cmd)
         tampered_idx = tampered.index("--settings") + 1
         tampered_settings = json.loads(tampered[tampered_idx])
-        tampered_settings["ignoreUserConfig"] = False
+        tampered_settings["mcpServers"] = {"foreign": {"enabled": True}}
         tampered[tampered_idx] = json.dumps(tampered_settings)
-        with patch("harness.tw.subprocess.run") as run_tampered:
-            with self.assertRaisesRegex(RuntimeError, "изоляции пользовательской конфигурации"):
+        with patch("harness.tw.verify_agy_contract", return_value="1.5.3"):
+            with self.assertRaisesRegex(RuntimeError, "Неподдерживаемые ключи"):
                 verify_servers(tampered)
-        run_tampered.assert_not_called()
 
         no_sandbox = list(headless_cmd)
         no_sandbox.remove("--sandbox")
-        with patch("harness.tw.subprocess.run") as run_no_sb:
+        with patch("harness.tw.verify_agy_contract", return_value="1.5.3"):
             with self.assertRaisesRegex(RuntimeError, "read-only режим"):
                 verify_servers(no_sandbox)
-        run_no_sb.assert_not_called()
+
+        no_disable = list(headless_cmd)
+        no_disable.remove("--disable-slash-commands")
+        with patch("harness.tw.verify_agy_contract", return_value="1.5.3"):
+            with self.assertRaisesRegex(RuntimeError, "disable-slash-commands"):
+                verify_servers(no_disable)
 
     def test_quota_guard_checks_selected_backend_and_raises_clear_error_on_missing_config(self):
         now = time.time()
@@ -713,6 +804,138 @@ print('node-sandbox-ok')
         switched_back = json.loads((self.root / ".harness/config.json").read_text())
         self.assertEqual(switched_back["backend"], "codex")
         launch.assert_called_once()
+
+    def test_stage_backends_and_stage_models_route_per_stage_and_isolate_quotas(self):
+        task = self.store.add(
+            "Смешанный конвейер",
+            backend="gemini",
+            stage_backends={"plan": "gemini", "implement": "codex", "review": "gemini"},
+            model="gemini-4-argon",
+            stage_models={"implement": "gpt-5.4-codex"},
+        )
+        self.assertEqual(task["data"]["stage_backends"]["implement"], "codex")
+        self.assertEqual(task["data"]["stage_models"]["implement"], "gpt-5.4-codex")
+
+        gemini_backend = FakeCodex()
+        codex_backend = FakeCodex()
+        observed_models = []
+        observed_quota_backends = []
+
+        def fake_create(cfg, name=None):
+            observed_models.append((name, cfg.get("model")))
+            return gemini_backend if name == "gemini" else codex_backend
+
+        def fake_check(workspace, folder):
+            (folder / "check.log").write_text("passed")
+            return 0
+
+        runner = Runner(self.store, check=fake_check)
+        with patch("harness.runner.create_backend", side_effect=fake_create), \
+                patch.object(runner.quota, "check", side_effect=lambda starting=False, backend=None: observed_quota_backends.append((starting, backend))):
+            with contextlib.redirect_stdout(io.StringIO()):
+                runner.run(task["id"])
+        final = self.store.get(task["id"])
+        self.assertEqual(final["state"], "review")
+        self.assertEqual(gemini_backend.calls, ["plan", "review"])
+        self.assertEqual(codex_backend.calls, ["implement"])
+        self.assertIn(("gemini", "gemini-4-argon"), observed_models)
+        self.assertIn(("codex", "gpt-5.4-codex"), observed_models)
+        self.assertEqual(
+            [b for starting, b in observed_quota_backends if starting],
+            ["gemini", "codex", "gemini", "gemini"],
+        )
+
+    def test_external_task_folders_live_outside_git_toplevel_and_preserve_legacy_folders(self):
+        toplevel = self.store.git_toplevel()
+        self.assertEqual(toplevel, self.root.resolve())
+        external_folder = self.store.folder(1)
+        self.assertFalse(external_folder.is_relative_to(toplevel))
+
+        legacy_folder = self.root / ".harness/tasks/TASK-009"
+        legacy_folder.mkdir(parents=True)
+        self.assertEqual(self.store.folder(9), legacy_folder.resolve())
+
+    def test_monorepo_scope_restricts_plan_implement_and_runs_check_in_scope_directory(self):
+        (self.root / "web").mkdir()
+        (self.root / "web/AGENTS.md").write_text("USE_WEB_RULES\n")
+        (self.root / "web/page.js").write_text("export const v = 1;\n")
+        subprocess.run(["git", "-C", str(self.root), "add", "web/AGENTS.md", "web/page.js"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.root),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "add web",
+            ],
+            check=True,
+        )
+
+        out_of_scope_task = self.store.add("Тронуть корень из web", backend="gemini", scope="web")
+        bad_backend = FakeCodex({"plan": [response(files=["app.py"])]})
+        runner_bad = Runner(self.store, backend=bad_backend)
+        with self.assertRaisesRegex(ValueError, "вне разрешённого scope"):
+            with contextlib.redirect_stdout(io.StringIO()):
+                runner_bad.run(out_of_scope_task["id"])
+        blocked = self.store.get(out_of_scope_task["id"])
+        self.assertEqual(blocked["state"], "blocked")
+        self.assertIn("вне разрешённого scope", blocked["data"]["reason"])
+
+        in_scope_task = self.store.add("Обновить страницу web", backend="gemini", scope="web")
+        check_cwds = []
+
+        class ScopedFakeBackend(FakeCodex):
+            supports_stage_scope = True
+
+            def call(self, stage, workspace, folder, text, interrupted=None, allowed_files=None, scope=None):
+                if stage == "plan":
+                    assert "USE_WEB_RULES" in text
+                    assert scope == "web"
+                    return response(files=["web/page.js"])
+                if stage == "implement":
+                    assert scope == "web"
+                    assert allowed_files == ["web/page.js"]
+                    (workspace / "web/page.js").write_text("export const v = 2;\n")
+                    return response(files=["web/page.js"])
+                return response(files=["web/page.js"], verdict="pass", evidence=["web/page.js обновлён"])
+
+        def scoped_check(check_ws, folder):
+            check_cwds.append(check_ws)
+            (folder / "check.log").write_text("web check ok")
+            return 0
+
+        runner_ok = Runner(self.store, backend=ScopedFakeBackend(), check=scoped_check)
+        with contextlib.redirect_stdout(io.StringIO()):
+            runner_ok.run(in_scope_task["id"])
+        done = self.store.get(in_scope_task["id"])
+        self.assertEqual(done["state"], "review")
+        self.assertEqual(done["data"]["path_scope"], "web")
+        expected_ws = self.store.folder(in_scope_task["id"]) / "workspace" / "web"
+        self.assertEqual(check_cwds, [expected_ws])
+
+    def test_execute_captures_sandboxed_check_output_outside_workspace(self):
+        from harness.runner import execute
+        folder = self.store.folder(1)
+        workspace = folder / "workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "app.py").write_text("x = 2\n")
+        cmd = sandbox_command(
+            self.config,
+            workspace,
+            True,
+            [str(Path(sys.executable).resolve()), "-B", "-c", "import app; assert app.x == 2; print('check-pipe-ok')"],
+        )
+        log = folder / "check.log"
+        rc = execute(cmd, workspace, log, 10)
+        self.assertEqual(rc, 0)
+        self.assertIn("check-pipe-ok", log.read_text())
 
 
 if __name__ == "__main__":

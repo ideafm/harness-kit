@@ -135,7 +135,12 @@ def prepare(root, ident=2):
     with (home / 'install.log').open('w') as output:
         subprocess.run(command, cwd=dependencies, env={'PATH': str(NODE.parent) + ':/usr/bin:/bin', 'NEXT_TELEMETRY_DISABLED': '1'},
                        stdout=output, stderr=subprocess.STDOUT, timeout=600, check=True)
-    workspace = root / '.harness' / 'tasks' / f'TASK-{ident:03}' / 'workspace'
+    from .state import Store
+    store = Store(root)
+    try:
+        workspace = store.folder(ident) / 'workspace'
+    finally:
+        store.db.close()
     shutil.copyfile(dependencies / 'package.json', workspace / 'package.json')
     shutil.copyfile(dependencies / 'package-lock.json', workspace / 'package-lock.json')
     for name in COMPONENTS:
