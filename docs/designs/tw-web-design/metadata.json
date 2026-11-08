@@ -1,0 +1,6 @@
+{
+  "name": "tw-web — Система агентской разработки",
+  "description": "Современная панель управления автономными разработчиками, задачами, пайплайном проверок, кодом и рантаймом.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

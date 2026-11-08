@@ -15,7 +15,11 @@ import {
   Check, 
   CheckCircle2, 
   Trash2, 
-  RotateCcw 
+  RotateCcw,
+  ChevronDown,
+  ArrowRight,
+  Clock,
+  AlertCircle
 } from 'lucide-react'
 
 export function TaskCard({
@@ -35,9 +39,24 @@ export function TaskCard({
   events?: boolean
   projectView?: boolean
 }) {
+  const hasArtifact = (name: string) => 
+    Array.isArray(task.artifacts) 
+      ? task.artifacts.includes(name) 
+      : Boolean(task.artifacts && name in task.artifacts)
+  const defaultTab = task.state === 'review' && task.stage === 'done' 
+    ? (hasArtifact('checks') ? 'checks' : hasArtifact('review') ? 'review' : 'events') 
+    : 'events'
+
   const [copiedKey, setCopiedKey] = useState(false)
   const [copiedBranch, setCopiedBranch] = useState(false)
+  const [selectedTab, setSelectedTab] = useState<string>(defaultTab)
+  const [selectedStage, setSelectedStage] = useState<string | undefined>(undefined)
   const actions = control?.allowed_actions || []
+
+  React.useEffect(() => {
+    setSelectedTab(defaultTab)
+    setSelectedStage(undefined)
+  }, [task.id, defaultTab])
 
   const guidance = task.state === 'rate_limited'
     ? 'Контроллер ожидает снятия ограничения. Срок восстановления не предоставлен.'
@@ -69,9 +88,6 @@ export function TaskCard({
   const hasBranch = Boolean(task.integration?.branch)
   const branchName = task.integration?.branch || 'Ветка не создана'
 
-  const canAccept = actions.includes('accept_result')
-  const canRequestChanges = actions.includes('request_changes')
-
   const handleCopyKey = () => {
     navigator.clipboard.writeText(`TASK-${task.id}`)
     setCopiedKey(true)
@@ -86,17 +102,17 @@ export function TaskCard({
   }
 
   const handleSelectStage = (stageId: string) => {
-    const stageToTabIndex: Record<string, number> = {
-      plan: 2,        // План
-      dev: 3,         // Изменения
-      checks: 4,      // Проверки
-      review: 5,      // Ревью
-      acceptance: 0   // История
+    setSelectedStage(stageId)
+    const stageToTab: Record<string, string> = {
+      plan: 'plan',
+      dev: 'request',
+      checks: 'checks',
+      review: 'review',
+      acceptance: 'events'
     }
-    const idx = stageToTabIndex[stageId]
-    if (idx !== undefined) {
-      const tabButtons = document.querySelectorAll<HTMLButtonElement>('.task-materials button[role="tab"]')
-      tabButtons[idx]?.click()
+    const targetTab = stageToTab[stageId]
+    if (targetTab) {
+      setSelectedTab(targetTab)
     }
   }
 
@@ -138,8 +154,24 @@ export function TaskCard({
 
         {/* Right Status Pill & Delete button */}
         <div className="flex items-center gap-2">
-          <div className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-900/40">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+          <div className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md ${
+            applied
+              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-900/40'
+              : task.question || acceptance
+              ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/40'
+              : task.state === 'running'
+              ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40'
+              : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
+          }`}>
+            {applied ? (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+            ) : task.question || acceptance ? (
+              <Clock className="w-3.5 h-3.5 text-amber-500" />
+            ) : task.state === 'running' ? (
+              <Clock className="w-3.5 h-3.5 text-blue-500" />
+            ) : (
+              <CheckCircle2 className="w-3.5 h-3.5 text-zinc-400" />
+            )}
             <span>{taskStateLabel(task)}</span>
           </div>
 
@@ -163,7 +195,11 @@ export function TaskCard({
 
       {/* 3. Pipeline Stepper matching reference */}
       <section aria-label="Пайплайн задачи">
-        <PipelineStepper task={task} onSelectStage={handleSelectStage} />
+        <PipelineStepper 
+          task={task} 
+          onSelectStage={handleSelectStage} 
+          selectedStage={selectedStage} 
+        />
       </section>
 
       {/* Rate limited banner if active */}
@@ -180,9 +216,13 @@ export function TaskCard({
       )}
 
       {/* 4. Action Decision Card matching reference screenshot */}
-      <div className="task-context bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 shadow-2xs space-y-4">
+      <div className={`task-context rounded-xl border p-5 shadow-2xs space-y-4 ${
+        applied
+          ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/60'
+          : 'bg-zinc-50/80 dark:bg-zinc-900/60 border-zinc-200 dark:border-zinc-800'
+      }`}>
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-          <div className="space-y-2 flex-1">
+          <div className="space-y-2 flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                 Что требуется от вас
@@ -190,14 +230,22 @@ export function TaskCard({
               <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
                 applied
                   ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
+                  : task.question
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
                   : acceptance
                   ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
-                  : 'bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300'
+                  : task.state === 'running'
+                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300 animate-pulse'
+                  : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300'
               }`}>
                 {applied
                   ? 'Применение подтверждено'
+                  : task.question
+                  ? 'Требуется ответ'
                   : acceptance
                   ? 'Требуется подтверждение'
+                  : task.state === 'running'
+                  ? 'Выполняется агентом'
                   : 'В процессе'}
               </span>
             </div>
@@ -207,7 +255,9 @@ export function TaskCard({
             </div>
 
             <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-              {acceptance
+              {task.question
+                ? 'Агент запросил уточнение для продолжения работы над задачей. Ответьте на вопрос, чтобы возобновить выполнение.'
+                : acceptance
                 ? 'Автономный агент успешно выполнил все этапы пайплайна. Все проверки типов tsc и ESLint пройдены без ошибок.'
                 : applied
                 ? `Ветка ${hasBranch ? branchName : 'main'} зафиксирована. Все артефакты синхронизированы.`
@@ -215,85 +265,92 @@ export function TaskCard({
             </p>
 
             {/* Toggle Details Disclosure */}
-            <details className="mt-2 text-xs">
-              <summary className="font-semibold text-blue-600 dark:text-blue-400 cursor-pointer py-1 inline-flex items-center gap-1">
-                Подробности результата
+            <details className="mt-2 text-xs group">
+              <summary className="font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer py-1 inline-flex items-center gap-1 list-none [&::-webkit-details-marker]:hidden">
+                <span>Подробности результата</span>
+                <ChevronDown className="w-3.5 h-3.5 group-open:rotate-180 transition-transform" />
               </summary>
-              <div className="mt-2 p-3 bg-zinc-50 dark:bg-zinc-800/60 rounded-lg border border-zinc-200 dark:border-zinc-700 space-y-2">
+              <div className="mt-2 p-3 bg-white dark:bg-zinc-950/60 rounded-lg border border-zinc-200/80 dark:border-zinc-800 space-y-2 text-zinc-700 dark:text-zinc-300 font-mono text-[11px] leading-relaxed">
                 <pre className="artifact font-mono text-xs whitespace-pre-wrap">{summary}</pre>
                 {task.state !== 'rate_limited' && task.reason?.trim() && (
-                  <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400 font-sans">
                     <strong>Причина ожидания: </strong>
                     {task.reason}
                   </p>
                 )}
                 {task.state !== 'rate_limited' && !task.reason?.trim() && (
-                  <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400 font-sans">
                     <strong>Причина ожидания: </strong>
                     {reason}
                   </p>
                 )}
                 {!task.question && (
-                  <p className="muted text-xs text-zinc-500">
+                  <p className="muted text-xs text-zinc-500 font-sans">
                     Конкретные рекомендации для человеческой проверки не предоставлены. Откройте «План», «Изменения», «Проверки» и «Ревью», чтобы изучить доказательства.
                   </p>
                 )}
+                <div className="flex items-center gap-3 pt-2 border-t border-zinc-100 dark:border-zinc-800/80 font-sans">
+                  {hasArtifact('diff') && (
+                    <button 
+                      type="button"
+                      onClick={() => setSelectedTab('diff')} 
+                      className="text-xs text-blue-600 dark:text-blue-400 font-medium hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Смотреть изменения (diff)</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                  )}
+                  {events && (
+                    <button 
+                      type="button"
+                      onClick={() => setSelectedTab('events')} 
+                      className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>История логов воркера</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </details>
           </div>
 
-          {/* Right Action Button Column matching reference */}
-          <div className="flex flex-wrap sm:flex-col items-stretch gap-2 shrink-0 sm:min-w-[190px]">
-            {/* Confirm & apply button: active if permitted, else disabled with opacity-40 */}
-            <button
-              onClick={() => {
-                if (!canAccept) return
-                const btn = document.querySelector<HTMLButtonElement>('.available-actions button')
-                btn?.click()
-              }}
-              disabled={!canAccept}
-              className={`px-4 py-2 rounded-lg text-white text-xs font-semibold shadow-xs transition-all flex items-center justify-center gap-1.5 ${
-                canAccept 
-                  ? 'bg-blue-600 hover:bg-blue-700 hover:shadow cursor-pointer' 
-                  : 'bg-blue-600 opacity-40 pointer-events-none cursor-not-allowed'
-              }`}
-              title={canAccept ? 'Подтвердить результат' : 'Действие недоступно в текущем состоянии'}
-            >
-              <Check className="w-3.5 h-3.5" />
-              <span>Подтвердить и применить</span>
-            </button>
+          {/* Right Action Column matching ActionBanner */}
+          <div className="flex flex-col sm:items-end gap-2 shrink-0 sm:min-w-[210px] w-full sm:w-auto">
+            {applied && (
+              <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-md border border-emerald-200/60 dark:border-emerald-900/40">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Применено в Git</span>
+              </div>
+            )}
 
-            {/* Request changes button: active if permitted, else disabled with opacity-40 */}
-            <button
-              onClick={() => {
-                if (!canRequestChanges) return
-                const reqBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('.available-actions button')).find(b => b.textContent?.includes('Доработать') || b.textContent?.includes('Отклонить'))
-                reqBtn?.click()
-              }}
-              disabled={!canRequestChanges}
-              className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors flex items-center justify-center gap-1.5 ${
-                canRequestChanges
-                  ? 'border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 cursor-pointer'
-                  : 'border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-40 pointer-events-none cursor-not-allowed'
-              }`}
-              title={canRequestChanges ? 'Запросить доработку у агента' : 'Действие недоступно в текущем состоянии'}
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-zinc-500" />
-              <span>Запросить доработку</span>
-            </button>
+            <section aria-label="Доступные действия" className="available-actions flex flex-col items-stretch gap-2 w-full">
+              {control ? (
+                <TaskActions 
+                  key={task.id} 
+                  control={control} 
+                  transport={transport} 
+                  session={session} 
+                  onRefresh={onRefresh} 
+                  modalAnswer={true}
+                />
+              ) : (
+                <p className="muted text-xs text-zinc-500 sm:text-right">
+                  Управление недоступно до получения актуальных полномочий контроллера.
+                </p>
+              )}
+            </section>
 
-            {/* Git branch button: active if branch exists, else disabled with opacity-40 */}
             <button
               onClick={handleCopyBranch}
               disabled={!hasBranch}
-              className={`px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800/80 text-xs font-mono transition-colors flex items-center justify-center gap-1.5 ${
+              className={`w-full px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-800/80 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-xs font-mono transition-colors flex items-center justify-center gap-1.5 ${
                 hasBranch
-                  ? 'hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-400 cursor-pointer'
+                  ? 'text-zinc-600 dark:text-zinc-400 cursor-pointer'
                   : 'opacity-40 pointer-events-none cursor-not-allowed text-zinc-400'
               }`}
               title={hasBranch ? 'Скопировать git checkout ветки' : 'Ветка ещё не инициализирована'}
             >
-              <GitBranch className="w-3 h-3 text-zinc-400" />
+              {copiedBranch ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <GitBranch className="w-3 h-3 text-zinc-400" />}
               <span>{copiedBranch ? 'Скопировано!' : 'git branch'}</span>
             </button>
           </div>
@@ -343,31 +400,20 @@ export function TaskCard({
             )}
           </div>
         )}
-
-        {/* Available Actions (wired to backend TaskActions) */}
-        <section className="available-actions pt-2 border-t border-zinc-200 dark:border-zinc-800" aria-label="Доступные действия">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300 mb-2">
-            Доступные действия
-          </h3>
-          {control ? (
-            <TaskActions 
-              key={task.id} 
-              control={control} 
-              transport={transport} 
-              session={session} 
-              onRefresh={onRefresh} 
-            />
-          ) : (
-            <p className="muted text-xs text-zinc-500">
-              Управление недоступно до получения актуальных полномочий контроллера.
-            </p>
-          )}
-        </section>
       </div>
 
       {/* 5. Materials Tabs matching reference */}
       <section aria-label="Детали и артефакты" className="pt-2">
-        <TaskTabs task={task} transport={transport} events={events} />
+        <TaskTabs 
+          task={task} 
+          transport={transport} 
+          events={events} 
+          value={selectedTab}
+          onValueChange={(tab) => {
+            setSelectedTab(tab)
+            setSelectedStage(undefined)
+          }}
+        />
       </section>
     </section>
   )

@@ -15,11 +15,15 @@ import {
 export function TaskTabs({
   task,
   transport,
-  events
+  events,
+  value,
+  onValueChange
 }: {
   task: Task
   transport: Transport
   events: boolean
+  value?: string
+  onValueChange?: (value: string) => void
 }) {
   const has = (name: string) => 
     Array.isArray(task.artifacts) 
@@ -38,7 +42,7 @@ export function TaskTabs({
   return (
     <Tabs 
       key={task.id} 
-      defaultValue={defaultTab} 
+      {...(value !== undefined ? { value, onValueChange } : { defaultValue: defaultTab })}
       className="task-materials border-t border-zinc-200 dark:border-zinc-800 pt-4"
     >
       <TabsList variant="line" aria-label="Материалы задачи" className="w-full justify-start border-b border-zinc-200 dark:border-zinc-800 gap-6 px-1 h-auto pb-0">
