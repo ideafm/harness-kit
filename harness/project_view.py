@@ -268,9 +268,14 @@ class ProjectView:
     def read_receipt(self, path):
         if not path.is_absolute() or '..' in path.parts:
             raise ValueError('Некорректный путь receipt')
-        home = self.root / '.harness'
-        if not path.is_relative_to(home) or any(parent.is_symlink()
-                for parent in (path, *path.parents) if parent.is_relative_to(home)):
+        service = TaskService(self.root)
+        try:
+            roots = (self.root / '.harness', service.store.external_tasks_root())
+        finally:
+            service.close()
+        matching_root = next((r for r in roots if path.is_relative_to(r)), None)
+        if matching_root is None or any(parent.is_symlink()
+                for parent in (path, *path.parents) if parent.is_relative_to(matching_root)):
             raise ValueError('Receipt вне состояния контроллера или заменён ссылкой')
         return json.loads(path.read_text())
 
@@ -302,8 +307,9 @@ class ProjectView:
         if export.is_relative_to(self.home):
             parts = export.relative_to(self.home).parts
             allowed = len(parts) >= 2 and bool(re.fullmatch(r'build-[a-f0-9]{32}', parts[0]))
+        check_root = preview.folder if export.is_relative_to(preview.folder) else (self.root / '.harness')
         if not allowed or not export.is_absolute() or '..' in export.parts or any(parent.is_symlink()
-                for parent in (export, *export.parents) if parent.is_relative_to(self.root / '.harness')):
+                for parent in (export, *export.parents) if parent.is_relative_to(check_root)):
             raise ValueError('Сохранённый экспорт вне состояния просмотра или заменён ссылкой')
         if not re.fullmatch(r'[a-f0-9]{64}', data.get('source_digest', '')):
             raise ValueError('Некорректная версия сохранённого экспорта')

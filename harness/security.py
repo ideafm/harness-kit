@@ -23,6 +23,30 @@ def validate_backend(backend):
     return backend
 
 
+def normalize_scope(scope):
+    if scope is None:
+        return ""
+    if not isinstance(scope, str):
+        raise ValueError("Некорректный формат scope")
+    cleaned = scope.strip().strip("/")
+    if not cleaned or cleaned == ".":
+        return ""
+    if cleaned in {"small", "large", "unknown"}:
+        return ""
+    path = PurePosixPath(cleaned)
+    if path.is_absolute() or ".." in path.parts or "." in path.parts or protected(cleaned):
+        raise ValueError(f"Недопустимый путь scope: {scope}")
+    return str(path)
+
+
+def path_in_scope(path, scope):
+    normalized = normalize_scope(scope)
+    if not normalized:
+        return True
+    candidate = str(PurePosixPath(str(path).strip("/")))
+    return candidate == normalized or candidate.startswith(normalized + "/")
+
+
 def protected(path):
     if any(ord(character) < 32 for character in str(path)):
         return True

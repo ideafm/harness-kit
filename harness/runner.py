@@ -7,12 +7,13 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from .approval import requires_approval, verify_documents, version
-from .security import doctor, export_snapshot, git, permission_args, protected, regular_files, read_regular, tree_entries, safe_env, sandbox_command, toml, validate_backend
+from .security import doctor, export_snapshot, git, normalize_scope, path_in_scope, permission_args, protected, regular_files, read_regular, tree_entries, safe_env, sandbox_command, toml, validate_backend
 from .state import StateChanged, atomic_json
 from .quota import Guard, QuotaPause
 
@@ -71,9 +72,45 @@ def execute(command, cwd, output, timeout, interrupted=lambda: False, input_text
     request = output.with_suffix(".request.txt")
     if input_text:
         request.write_text(input_text)
-    with output.open("w") as log, (request.open("rb") if input_text else open(os.devnull, "rb")) as source:
-        process = subprocess.Popen(command, cwd=cwd, env=safe_env() if env is None else env, stdin=source,
-                                   stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    with output.open("wb") as log:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=safe_env() if env is None else env,
+            stdin=subprocess.PIPE if input_text else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+        def pump_stdout():
+            try:
+                while True:
+                    chunk = process.stdout.read(4096)
+                    if not chunk:
+                        break
+                    log.write(chunk)
+                    log.flush()
+            except (OSError, ValueError):
+                pass
+
+        def pump_stdin():
+            try:
+                process.stdin.write(input_text.encode("utf-8"))
+                process.stdin.flush()
+            except (OSError, ValueError):
+                pass
+            finally:
+                try:
+                    process.stdin.close()
+                except (OSError, ValueError):
+                    pass
+
+        reader = threading.Thread(target=pump_stdout, daemon=True)
+        reader.start()
+        if input_text:
+            writer = threading.Thread(target=pump_stdin, daemon=True)
+            writer.start()
         active = (Path(active_folder) if active_folder else output.parent) / "active.json"
         atomic_json(active, {"pid": process.pid, "command": command[0]})
         try:
@@ -84,6 +121,7 @@ def execute(command, cwd, output, timeout, interrupted=lambda: False, input_text
                 if time.monotonic() >= deadline:
                     raise TimeoutError("Время этапа истекло")
                 time.sleep(0.1)
+            reader.join(timeout=2)
             return process.returncode
         finally:
             try:
@@ -93,6 +131,11 @@ def execute(command, cwd, output, timeout, interrupted=lambda: False, input_text
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
             except ProcessLookupError:
+                pass
+            reader.join(timeout=2)
+            try:
+                process.stdout.close()
+            except (OSError, ValueError):
                 pass
             active.unlink(missing_ok=True)
 
@@ -109,6 +152,7 @@ class Codex:
         answer = folder / f"{stage}.response.json"
         atomic_json(schema, SCHEMA)
         answer.unlink(missing_ok=True)
+        project_root = Path(self.config.get("project_root") or folder.parents[2])
         command = [self.config["codex"], "--no-daemon", "exec", "--ignore-user-config",
                    "--ephemeral", "--skip-git-repo-check", "--json", "--color", "never",
                    "-C", str(workspace), "-c", 'approval_policy="never"',
@@ -118,7 +162,7 @@ class Codex:
                    "-c", "features.computer_use=false", "-c", "features.image_generation=false",
                    "-c", "features.shell_snapshot=false", "-c", "features.hooks=false",
                    "-c", "project_doc_max_bytes=0",
-                   "-c", "skills.config=" + toml([{"path": str(folder.parents[2] / ".agents/skills/tw/SKILL.md"), "enabled": False}]),
+                   "-c", "skills.config=" + toml([{"path": str(project_root / ".agents/skills/tw/SKILL.md"), "enabled": False}]),
                    "-c", 'shell_environment_policy.inherit="none"',
                    "-c", "shell_environment_policy.experimental_use_profile=false",
                    "-c", "shell_environment_policy.ignore_default_excludes=false",
@@ -185,25 +229,61 @@ class Runner:
         self.check_override = check
         self.quota = Guard(store, self.config)
 
-    def task_backend(self, task):
+    def task_backend(self, task, stage=None):
+        active_stage = stage or task.get("stage")
+        stage_map = task["data"].get("stage_backends")
+        if isinstance(stage_map, dict) and active_stage in stage_map and stage_map[active_stage] is not None:
+            return validate_backend(stage_map[active_stage])
         saved = task["data"].get("backend")
         if saved is not None:
             return validate_backend(saved)
         if self.backend_name is not None:
             return self.backend_name
+        cfg_map = self.config.get("stage_backends")
+        if isinstance(cfg_map, dict) and active_stage in cfg_map and cfg_map[active_stage] is not None:
+            return validate_backend(cfg_map[active_stage])
         return validate_backend(self.config.get("backend", "codex"))
 
-    def adapter_for(self, task):
-        selected = self.task_backend(task)
+    def task_model(self, task, stage=None):
+        active_stage = stage or task.get("stage")
+        stage_models = task["data"].get("stage_models")
+        if isinstance(stage_models, dict) and active_stage in stage_models and stage_models[active_stage] is not None:
+            return str(stage_models[active_stage])
+        if task["data"].get("model") is not None:
+            return str(task["data"]["model"])
+        cfg_models = self.config.get("stage_models")
+        if isinstance(cfg_models, dict) and active_stage in cfg_models and cfg_models[active_stage] is not None:
+            return str(cfg_models[active_stage])
+        return str(self.config.get("model", ""))
+
+    def task_scope_dir(self, task):
+        data = task["data"]
+        raw = data.get("path_scope") or data.get("scope_dir")
+        if not raw:
+            candidate = data.get("scope")
+            if isinstance(candidate, str) and candidate not in {"small", "large", "unknown"}:
+                raw = candidate
+        if not raw:
+            cfg_scope = self.config.get("path_scope") or self.config.get("scope_dir") or self.config.get("scope")
+            if isinstance(cfg_scope, str) and cfg_scope not in {"small", "large", "unknown"}:
+                raw = cfg_scope
+        return normalize_scope(raw)
+
+    def adapter_for(self, task, stage=None):
+        selected = self.task_backend(task, stage=stage)
+        model = self.task_model(task, stage=stage)
         if self.backend_override is not None:
             return self.backend_override
-        return create_backend(self.config, selected)
+        effective = {**self.config, "project_root": str(self.store.root)}
+        if model:
+            effective["model"] = model
+        return create_backend(effective, selected)
 
     def interrupted(self, ident):
         current = self.store.get(ident)
         if current["state"] != "running":
             return True
-        self.quota.check(backend=self.task_backend(current))
+        self.quota.check(backend=self.task_backend(current, stage=current["stage"]))
         return False
 
     def persist(self, task, kind, detail=None):
@@ -219,9 +299,12 @@ class Runner:
             try:
                 if self.backend_name is not None and not any(task["data"].get("attempts", {}).values()):
                     task["data"]["backend"] = self.backend_name
-                selected_backend = self.task_backend(task)
-                task["data"]["backend"] = selected_backend
-                active_backend = self.adapter_for(task)
+                if task["data"].get("backend") is None:
+                    task["data"]["backend"] = validate_backend(self.config.get("backend", "codex"))
+                else:
+                    task["data"]["backend"] = validate_backend(task["data"]["backend"])
+                selected_backend = self.task_backend(task, stage=task["stage"])
+                active_backend = self.adapter_for(task, stage=task["stage"])
                 active = self.store.folder(ident) / "active.json"
                 if active.exists():
                     pid = json.loads(active.read_text())["pid"]
@@ -243,9 +326,13 @@ class Runner:
                 previous_attempts = dict(task['data']['attempts'])
                 while task["stage"] != "done":
                     previous_attempts = dict(task['data']['attempts'])
+                    stage_backend = self.task_backend(task, stage=task["stage"])
+                    if stage_backend != selected_backend and task["stage"] in {"plan", "implement", "review"}:
+                        self.adapter_for(task, stage=task["stage"]).preflight()
+                        selected_backend = stage_backend
                     if self.interrupted(ident):
                         raise Interrupted()
-                    self.quota.check(starting=True, backend=selected_backend)
+                    self.quota.check(starting=True, backend=stage_backend)
                     self.step(task)
                     if task["state"] != "running":
                         break
@@ -271,7 +358,7 @@ class Runner:
                                  {'retry_at': error.retry_at, 'reason': str(error)})
             except RateLimited:
                 count = task["data"].get("limit_count", 0) + 1
-                engine = "Gemini" if self.task_backend(task) == "gemini" else "Codex"
+                engine = "Gemini" if self.task_backend(task, stage=task["stage"]) == "gemini" else "Codex"
                 task["data"].update(limit_count=count, retry_at=time.time() + min(300 * 2 ** min(count - 1, 6), 18000),
                                     reason=f"Лимит {engine}; время сброса неизвестно, используется backoff")
                 attempts = task["data"]["attempts"]
@@ -315,10 +402,13 @@ class Runner:
 
     def prompt(self, task):
         data = task["data"]
+        scope_dir = self.task_scope_dir(task)
         context = {k: data.get(k) for k in ("request", "answers", "specification", "plan", "criteria", "files", "feedback",
                                           "approval_mode", "effective_approval", "plan_feedback", "runtime_context", "technical_resolutions", "design_reference", "result_feedback")}
         context["controller_check"] = self.config["check"]
         context['controller_stage'] = task['stage']
+        if scope_dir:
+            context["controller_path_scope"] = scope_dir
         if task['stage'] in {'implement', 'review'} and data.get('plan_approval'):
             verify_documents(self.store, task)
             context['controller_plan_authorization'] = {
@@ -327,9 +417,16 @@ class Runner:
         if data.get('input_baseline'):
             context['controller_input_baseline'] = {k: v for k, v in data['input_baseline'].items() if k != 'manifest'}
         context["python_executable"] = str(Path(sys.executable).resolve())
+        instruction_chunks = []
         project_instructions = Path(data["workspace"]) / "AGENTS.md"
         if project_instructions.is_file() and not project_instructions.is_symlink():
-            context["project_instructions_from_snapshot"] = project_instructions.read_text()[:32000]
+            instruction_chunks.append(project_instructions.read_text()[:32000])
+        if scope_dir:
+            scoped_instructions = Path(data["workspace"]) / scope_dir / "AGENTS.md"
+            if scoped_instructions.is_file() and not scoped_instructions.is_symlink() and scoped_instructions != project_instructions:
+                instruction_chunks.append(scoped_instructions.read_text()[:32000])
+        if instruction_chunks:
+            context["project_instructions_from_snapshot"] = "\n\n".join(instruction_chunks)[:32000]
         if task["stage"] == "review":
             folder = self.store.folder(task["id"])
             patch = (folder / "changes.patch").read_text()
@@ -365,6 +462,7 @@ class Runner:
     def step(self, task):
         stage = task["stage"]
         data = task["data"]
+        scope_dir = self.task_scope_dir(task)
         if stage == "implement" and requires_approval(data):
             verify_documents(self.store, task)
             if data.get("plan_approval", {}).get("version") != data["plan_version"]:
@@ -383,14 +481,26 @@ class Runner:
             from .node import source_digest
             checked_source = source_digest(workspace)
             checked_changes = list(data['changes'])
+            check_workspace = (workspace / scope_dir) if scope_dir else workspace
+            if scope_dir and (not check_workspace.is_dir() or check_workspace.is_symlink()):
+                raise RuntimeError(f"Каталог scope не найден в рабочей копии: {scope_dir}")
+            scope_checks = self.config.get("scope_checks")
+            check_cmd = (
+                scope_checks[scope_dir]
+                if scope_dir and isinstance(scope_checks, dict) and scope_dir in scope_checks
+                else self.config["check"]
+            )
+            stage_backend = self.task_backend(task, stage="check")
+            scoped_toolchain = bool(scope_dir and (self.store.root / scope_dir / '.harness/toolchains/next-ui/toolchain.json').is_file())
             if self.check_override:
-                code = self.check_override(workspace, folder)
-            elif data.get('frontend_toolchain') == 'next-ui':
+                code = self.check_override(check_workspace, folder)
+            elif data.get('frontend_toolchain') == 'next-ui' or scoped_toolchain:
                 from .node import check as frontend_check
-                code = frontend_check(workspace, folder, {**self.config, "backend": self.task_backend(task)}, lambda: self.interrupted(task['id']))
+                project_root = (self.store.root / scope_dir) if scoped_toolchain else self.store.root
+                code = frontend_check(check_workspace, folder, {**self.config, "backend": stage_backend}, lambda: self.interrupted(task['id']), project_root=project_root)
             else:
-                code = execute(sandbox_command({**self.config, "backend": self.task_backend(task)}, workspace, True, self.config["check"]),
-                               workspace, folder / "check.log", self.config["timeout"], lambda: self.interrupted(task["id"]))
+                code = execute(sandbox_command({**self.config, "backend": stage_backend}, check_workspace, True, check_cmd),
+                               check_workspace, folder / "check.log", self.config["timeout"], lambda: self.interrupted(task["id"]))
             if code:
                 data["feedback"] = "Проверки красные.\n" + (folder / "check.log").read_text(errors="replace")[-16000:]
                 task["stage"] = "implement"
@@ -400,13 +510,13 @@ class Runner:
                 self.report(task)
                 if data['changes'] != checked_changes:
                     raise RuntimeError('Состав изменений изменился во время проверок')
-                data["check_receipt"] = {"command": self.config["check"], "exit_code": 0,
+                data["check_receipt"] = {"command": check_cmd, "exit_code": 0,
                     "time": time.time(), "changes": data["changes"],
                     "log_sha256": hashlib.sha256((folder / "check.log").read_bytes()).hexdigest(),
                     'source_digest': checked_source}
                 from .project_view import capture_checked
                 capture_checked(self.store, task)
-                data["feedback"] = "Проверки контроллера прошли: " + repr(self.config["check"])
+                data["feedback"] = "Проверки контроллера прошли: " + repr(check_cmd)
                 task["stage"] = "review"
             self.persist(task, "checks_finished", {"exit_code": code})
             return
@@ -414,7 +524,19 @@ class Runner:
             self.report(task)
             if data["changes"] != data["check_receipt"]["changes"]:
                 raise RuntimeError("Рабочая копия изменилась после проверок; ревью запрещено")
-        result = self.adapter_for(task).call(stage, workspace, folder, self.prompt(task), lambda: self.interrupted(task["id"]))
+        adapter = self.adapter_for(task, stage=stage)
+        if getattr(adapter, "supports_stage_scope", False):
+            result = adapter.call(
+                stage,
+                workspace,
+                folder,
+                self.prompt(task),
+                lambda: self.interrupted(task["id"]),
+                allowed_files=data.get("files") if stage == "implement" else None,
+                scope=scope_dir or None,
+            )
+        else:
+            result = adapter.call(stage, workspace, folder, self.prompt(task), lambda: self.interrupted(task["id"]))
         if self.store.get(task['id'])['state'] != 'running':
             raise Interrupted()
         validate_result(result)
@@ -433,7 +555,11 @@ class Runner:
                 path = Path(name)
                 if path.is_absolute() or protected(name) or name in {"", "."} or ".." in path.parts:
                     raise ValueError(f"План включает запрещённый путь: {name}")
+                if scope_dir and not path_in_scope(name, scope_dir):
+                    raise ValueError(f"План включает путь вне разрешённого scope ({scope_dir}): {name}")
             data.update({k: result[k] for k in ("specification", "plan", "criteria", "files", "risk", "scope", "approval_reason")})
+            if scope_dir:
+                data["path_scope"] = scope_dir
             data["plan_summary"] = result["summary"]
             data["plan_generation"] = data.get("plan_generation", 0) + 1
             data["effective_approval"] = "approve-plan" if requires_approval(data) else "auto"
@@ -476,6 +602,7 @@ class Runner:
         from .baseline import verify
         verify(self.store, task)
         data = task["data"]
+        scope_dir = self.task_scope_dir(task)
         workspace = Path(data["workspace"])
         for relative, info in tree_entries(workspace, include_protected=True):
             if info is None or stat.S_ISLNK(info.st_mode):
@@ -497,6 +624,8 @@ class Runner:
                 continue
             if name not in data["files"]:
                 raise RuntimeError(f"Изменение вне плана: {name}")
+            if scope_dir and not path_in_scope(name, scope_dir):
+                raise RuntimeError(f"Изменение вне разрешённого scope ({scope_dir}): {name}")
             if path is None and (workspace / name).is_symlink():
                 raise RuntimeError(f"Файл заменён ссылкой: {name}")
             if old_info and data.get('input_baseline'):
