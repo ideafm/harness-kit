@@ -258,7 +258,7 @@ class ProjectView:
             interrupted = lambda: self.stop_event.is_set() or self.selection() != selection
             if settings['adapter'] == 'next-ui':
                 from .node import check
-                if check(preview.workspace, folder, self.config, interrupted, project_root=self.root):
+                if check(preview.workspace, folder, self.config, interrupted, project_root=preview.build_root):
                     raise ValueError('Сборка рабочей версии не прошла')
             else:
                 preview.build_static(folder, source_digest(preview.workspace))
@@ -381,16 +381,22 @@ class ProjectView:
                 try:
                     settings = profile(service.store)
                     folder = service.store.folder(selection['task'])
+                    workspace = folder / 'workspace'
+                    if settings['adapter'] == 'next-ui':
+                        from .runner import Runner
+                        scope = Runner(service.store).task_scope_dir(service.store.get(selection['task']))
+                        if scope:
+                            workspace = workspace / scope
                 finally:
                     service.close()
                 if selection['mode'] == 'working':
-                    version = source_digest(folder / 'workspace')
+                    version = source_digest(workspace)
                 else:
                     path = folder / ('frontend-receipt.json' if settings['adapter'] == 'next-ui' else 'runtime-receipt.json')
                     if path.is_symlink():
                         raise ValueError('Receipt заменён ссылкой')
                     version = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-                workspace_version = version if selection['mode'] == 'working' else source_digest(folder / 'workspace')
+                workspace_version = version if selection['mode'] == 'working' else source_digest(workspace)
                 fingerprint = json.dumps([selection, settings, version, workspace_version], sort_keys=True)
                 if fingerprint == previous:
                     continue

@@ -102,6 +102,44 @@ class PreviewTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
+    def test_scoped_next_preview_uses_frontend_sources_and_digest(self):
+        task = self.store.get(1)
+        task['data']['path_scope'] = 'web'
+        self.store.save(task, 'fixture_scope')
+        workspace = self.store.folder(1) / 'workspace'
+        frontend = workspace / 'web'
+        frontend.mkdir()
+        (frontend / 'package.json').write_text('{}')
+        receipt = json.loads(self.receipt.read_text())
+        receipt['source_digest'] = source_digest(frontend)
+        atomic_json(self.receipt, receipt)
+        preview = Preview(self.store.root, 1)
+        self.assertEqual(preview.workspace, frontend)
+        self.assertEqual(preview.build_root, self.store.root)
+        toolchain = self.store.root / 'web/.harness/toolchains/next-ui'
+        toolchain.mkdir(parents=True)
+        (toolchain / 'toolchain.json').write_text('{}')
+        self.assertEqual(Preview(self.store.root, 1).build_root, self.store.root / 'web')
+        preview.publish(self.receipt)
+        self.assertTrue(preview.state['current'])
+        (workspace / 'app.py').write_text('unrelated core change')
+        preview.publish(self.receipt)
+        self.assertTrue(preview.state['current'])
+        (frontend / 'package.json').write_text('{"name":"changed"}')
+        preview.publish(self.receipt)
+        self.assertFalse(preview.state['current'])
+
+    def test_scoped_next_preview_rejects_missing_or_symlinked_scope(self):
+        task = self.store.get(1)
+        task['data']['path_scope'] = 'web'
+        self.store.save(task, 'fixture_scope')
+        workspace = self.store.folder(1) / 'workspace'
+        with self.assertRaises(ValueError):
+            Preview(self.store.root, 1)
+        (workspace / 'web').symlink_to(self.assets, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            Preview(self.store.root, 1)
+
     def test_preview_serves_verified_export_and_rejects_mutated_asset(self):
         status, _, body = self.preview.dispatch('GET', '/', self.headers)
         self.assertEqual(status, 200)

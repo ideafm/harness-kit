@@ -44,6 +44,20 @@ class Preview:
                     raise ValueError('Для проекта ещё не подготовлен поддерживаемый preview runtime')
                 self.runtime = 'static'
             self.config = json.loads((service.store.home / 'config.json').read_text())
+            self.build_root = self.root
+            if self.runtime == 'next-ui':
+                from .runner import Runner
+                scope = Runner(service.store).task_scope_dir(task)
+                if scope:
+                    scoped_workspace = self.workspace / scope
+                    if not scoped_workspace.is_dir() or any(
+                            parent.is_symlink() for parent in (scoped_workspace, *scoped_workspace.parents)
+                            if parent.is_relative_to(self.workspace)):
+                        raise ValueError('Недопустимый каталог scope preview')
+                    self.workspace = scoped_workspace
+                    scoped_root = self.root / scope
+                    if (scoped_root / '.harness/toolchains/next-ui/toolchain.json').is_file():
+                        self.build_root = scoped_root
         finally:
             service.close()
         self.home = self.folder / 'live-preview'
@@ -118,7 +132,7 @@ class Preview:
                     self.state.update(building=True, message='Изменения сохранены · собираем preview')
                 build = self.home / f'build-{time.time_ns()}'
                 build.mkdir()
-                code = (check(self.workspace, build, self.config, lambda: self.stop.is_set() or self.rejected(), project_root=self.root)
+                code = (check(self.workspace, build, self.config, lambda: self.stop.is_set() or self.rejected(), project_root=self.build_root)
                         if self.runtime == 'next-ui' else self.build_static(build, digest))
                 if code:
                     raise RuntimeError('Проверки или сборка не прошли')
