@@ -327,3 +327,23 @@ it('удаление из строки сначала выбирает зада�
  fireEvent.click(screen.getByRole('button',{name:'Отмена'}))
  expect(post).not.toHaveBeenCalled()
 })
+
+it('чекбоксы выбирают видимые неработающие задачи без открытия карточек',async()=>{
+ const tasks=[{id:1,state:'backlog',stage:'plan',updated:1,request:'Выбираемая задача',artifacts:[]},{id:2,state:'running',stage:'implement',updated:1,request:'Работающая задача',artifacts:[]}]
+ window.history.replaceState(null,'','/?project=main')
+ const get=vi.fn().mockImplementation(async(path:string)=>{
+  if(path==='projects')return {items:[{id:'main',name:'Проект'}],default_project_id:'main',connect_url:''}
+  if(path==='session')return {csrf_token:'csrf'}
+  if(path.endsWith('/status'))return {project:'main',tasks,worker:{running:false}}
+  if(path.endsWith('/capabilities'))return {project_id:'main',actions:[],events:false,apply:false}
+  throw Error(path)
+ })
+ render(<TaskPanel transport={{get,post:vi.fn()} as Transport}/>)
+ const check=await screen.findByRole('checkbox',{name:'Выбрать задачу #1'})
+ expect((screen.getByRole('checkbox',{name:'Выбрать задачу #2'}) as HTMLInputElement).disabled).toBe(true)
+ fireEvent.click(check)
+ expect(screen.getByText('Выбрано: 1')).toBeTruthy()
+ expect(window.location.search).not.toContain('task=')
+ fireEvent.change(screen.getByLabelText('Поиск задач'),{target:{value:'Работающая'}})
+ expect(screen.getByText('Выбрано: 0')).toBeTruthy()
+})

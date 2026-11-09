@@ -165,6 +165,9 @@ class WebApplication:
                 elif method == 'POST':
                     payload = json.loads(body)
                     key = headers.get('Idempotency-Key')
+                    if parsed.path == '/api/v1/tasks/batch':
+                        from .batch_control import BatchControl
+                        return self.json(200, BatchControl(service).perform(payload, key, headers.get('If-Match')))
                     if parsed.path == '/api/v1/queue':
                         from .queue_control import QueueControl
                         return self.json(200, QueueControl(service).perform(payload, key, headers.get('If-Match')))

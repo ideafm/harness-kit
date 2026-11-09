@@ -5,6 +5,7 @@ import { httpTransport } from '@/lib/http-transport'
 import { useTaskData } from '@/hooks/use-task-data'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ProjectSidebar } from './project-sidebar'
+import { BatchActions } from './batch-actions'
 import { TaskCard } from './task-card'
 import { CreateTaskSheet } from './create-task-sheet'
 import { TopHeader } from './top-header'
@@ -34,6 +35,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
   const projectBackend = (typeof data.status?.project === 'object' && data.status.project?.backend) || data.projects?.items.find(p => p.id === data.projectId)?.backend || 'codex'
 
   const [deleteRequestedTask, setDeleteRequestedTask] = useState<number>()
+  const [checked,setChecked] = useState<number[]>([])
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [density, setDensity] = useState<'compact' | 'normal'>('compact')
@@ -97,6 +99,11 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
 
     return matchesFilter && matchesSearch
   })
+
+  useEffect(()=>setChecked([]),[data.projectId,filter,search])
+  const selectable = filtered.filter(t=>!['running','trashed'].includes(t.state))
+  const checkedTasks = tasks.filter(t=>checked.includes(t.id))
+  const toggleChecked = (id:number)=>setChecked(ids=>ids.includes(id)?ids.filter(n=>n!==id):[...ids,id])
 
   const select = (id: number) => {
     data.select(id)
@@ -288,23 +295,24 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
                   )}
                 </div>
 
-                {/* Select All Checkbox bar (disabled with opacity-40 and pointer-events-none) */}
-                <div className="flex items-center justify-between text-[11px] text-zinc-500 pt-0.5">
-                  <div className="flex items-center gap-1.5 opacity-40 pointer-events-none cursor-not-allowed" title="Пакетные операции в разработке">
-                    <input
-                      type="checkbox"
-                      disabled
-                      className="rounded text-blue-600"
-                    />
-                    <span>Выбрать все задачи</span>
-                  </div>
-                </div>
+                <label className="flex items-center gap-2 text-xs">
+                  <input type="checkbox" aria-label="Выбрать видимые задачи" disabled={data.commandsDisabled||!selectable.length}
+                    checked={selectable.length>0&&selectable.every(t=>checked.includes(t.id))}
+                    ref={node=>{if(node)node.indeterminate=selectable.some(t=>checked.includes(t.id))&&!selectable.every(t=>checked.includes(t.id))}}
+                    onChange={event=>setChecked(event.target.checked?selectable.map(t=>t.id):[])}/>
+                  Выбрать видимые задачи
+                </label>
+                <BatchActions key={data.projectId} tasks={checkedTasks} transport={data.transport} session={data.session} disabled={data.commandsDisabled}
+                  onDone={()=>{setChecked([]);void data.refresh()}}/>
+
               </div>
 
               {/* Task Cards List: continuous scrollable list */}
               <div className="p-2 flex-1 overflow-y-auto min-h-0">
                 {filtered.length ? (
                   <TaskTable 
+                    checked={checked}
+                    onToggleChecked={data.commandsDisabled ? undefined : toggleChecked}
                     tasks={filtered} 
                     selected={data.selected} 
                     onSelect={select}
@@ -399,11 +407,15 @@ export function TaskTable({
   selected,
   onSelect,
   onDelete,
+  checked = [],
+  onToggleChecked,
   density = 'compact'
 }: {
   tasks: Task[]
   selected?: number
   onSelect: (id: number) => void
+  checked?: number[]
+  onToggleChecked?: (id:number) => void
   onDelete?: (id: number) => void
   density?: 'compact' | 'normal'
 }) {
@@ -488,11 +500,12 @@ export function TaskTable({
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <input
                   type="checkbox"
-                  disabled
-                  checked={false}
-                  className="rounded text-zinc-300 dark:text-zinc-700 border-zinc-300 dark:border-zinc-700 opacity-40 cursor-not-allowed shrink-0"
-                  title="Массовые операции с задачами не поддерживаются бэкендом"
-                  tabIndex={-1}
+                  disabled={!onToggleChecked || isRunning || t.state === 'trashed'}
+                  checked={checked.includes(t.id)}
+                  aria-label={`Выбрать задачу #${t.id}`}
+                  className="rounded shrink-0 disabled:opacity-30"
+                  onClick={event=>event.stopPropagation()}
+                  onChange={()=>onToggleChecked?.(t.id)}
                 />
 
                 {isActionRequired && (
@@ -583,11 +596,12 @@ export function TaskTable({
               <div className="flex items-center gap-2 font-mono text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
                 <input
                   type="checkbox"
-                  disabled
-                  checked={false}
-                  className="rounded text-zinc-300 dark:text-zinc-700 border-zinc-300 dark:border-zinc-700 opacity-40 cursor-not-allowed"
-                  title="Массовые операции с задачами не поддерживаются бэкендом"
-                  tabIndex={-1}
+                  disabled={!onToggleChecked || isRunning || t.state === 'trashed'}
+                  checked={checked.includes(t.id)}
+                  aria-label={`Выбрать задачу #${t.id}`}
+                  className="rounded shrink-0 disabled:opacity-30"
+                  onClick={event=>event.stopPropagation()}
+                  onChange={()=>onToggleChecked?.(t.id)}
                 />
                 {isActionRequired && (
                   <span className="relative flex h-2 w-2 shrink-0">
