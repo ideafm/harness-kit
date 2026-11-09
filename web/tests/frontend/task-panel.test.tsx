@@ -307,3 +307,23 @@ it('отделяет корзину от основного списка и фи
  expect(screen.getByRole('button',{name:'#1 Активная задача'})).toBeTruthy()
  expect(screen.queryByRole('button',{name:'#2 Задача из корзины'})).toBeNull()
 })
+
+it('удаление из строки сначала выбирает задачу и открывает подтверждение без POST',async()=>{
+ const task={id:1,state:'paused',stage:'implement',updated:1,request:'Удалить из списка',artifacts:[]}
+ window.history.replaceState(null,'','/?project=main')
+ const post=vi.fn()
+ const get=vi.fn().mockImplementation(async(path:string)=>{
+  if(path==='projects')return {items:[{id:'main',name:'Проект'}],default_project_id:'main',connect_url:''}
+  if(path==='session')return {csrf_token:'csrf'}
+  if(path.endsWith('/status'))return {project:'main',tasks:[task],worker:{running:false}}
+  if(path.endsWith('/capabilities'))return {project_id:'main',actions:['delete'],events:false,apply:false}
+  return {task,revision:'r1',allowed_actions:['delete'],plan:null,result:null,confirmation_urls:{}}
+ })
+ render(<TaskPanel transport={{get,post} as Transport}/>)
+ fireEvent.click(await screen.findByRole('button',{name:'Удалить задачу #1'}))
+ await screen.findByRole('alertdialog')
+ expect(post).not.toHaveBeenCalled()
+ expect(window.location.search).toContain('task=1')
+ fireEvent.click(screen.getByRole('button',{name:'Отмена'}))
+ expect(post).not.toHaveBeenCalled()
+})

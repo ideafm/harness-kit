@@ -201,3 +201,39 @@ it('read-only без csrf загружает данные и не получае
  expect((screen.getByRole('button',{name:'＋ Новая задача'}) as HTMLButtonElement).disabled).toBe(true)
  expect(base.post).not.toHaveBeenCalled()
 })
+
+it('сохраняет черновик и iframe при ошибке refresh, блокируя команды до восстановления',async()=>{
+ window.history.replaceState(null,'','/?project=a&task=1')
+ const base=api();const original=base.get.getMockImplementation()!
+ let disconnected=false
+ const decision={...control,allowed_actions:['answer','accept_result'],pending_question_id:'q',confirmation_widgets:{accept_result:session.confirmation_origin+'/confirm/embed?id=1'}}
+ base.get.mockImplementation((path:string,signal?:AbortSignal)=>{
+  if(disconnected&&path.endsWith('/status'))return Promise.reject(Error('Связь потеряна'))
+  if(path.endsWith('/control'))return Promise.resolve(decision)
+  return original(path,signal)
+ })
+ function Editor(){
+  const data=useTaskData(base)
+  return <><button onClick={()=>void data.refresh()}>Проверить связь</button><p>{data.error}</p>{data.control&&<TaskActions control={data.control} session={data.session} transport={data.transport} commandsDisabled={data.commandsDisabled} onRefresh={()=>void data.refresh()}/>}</>
+ }
+ render(<Editor/> )
+ const input=await screen.findByLabelText('Ответ на вопрос')
+ fireEvent.change(input,{target:{value:'Не потерять этот текст'}})
+ const iframe=screen.getByTitle('Принять')
+ disconnected=true
+ fireEvent.click(screen.getByText('Проверить связь'))
+ await screen.findByText('Связь потеряна')
+ expect(screen.getByLabelText('Ответ на вопрос')).toBe(input)
+ expect((input as HTMLTextAreaElement).value).toBe('Не потерять этот текст')
+ expect(screen.getByTitle('Принять')).toBe(iframe)
+ expect(iframe.closest('[inert]')).toBeTruthy()
+ expect((screen.getByText('Отправить ответ') as HTMLButtonElement).disabled).toBe(true)
+ fireEvent.click(screen.getByText('Отправить ответ'))
+ expect(base.post).not.toHaveBeenCalled()
+ disconnected=false
+ fireEvent.click(screen.getByText('Проверить связь'))
+ await vi.waitFor(()=>expect((screen.getByText('Отправить ответ') as HTMLButtonElement).disabled).toBe(false))
+ expect(screen.getByTitle('Принять')).toBe(iframe)
+ expect(iframe.closest('[inert]')).toBeNull()
+ expect((input as HTMLTextAreaElement).value).toBe('Не потерять этот текст')
+})

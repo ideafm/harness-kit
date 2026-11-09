@@ -32,6 +32,9 @@ export function TaskCard({
   onRefresh,
   events = false,
   projectView = false,
+  requestDelete = false,
+  onDeleteRequestHandled,
+  commandsDisabled = false,
   onOpenTerminal
 }: {
   task: Task
@@ -41,6 +44,9 @@ export function TaskCard({
   onRefresh: () => void
   events?: boolean
   projectView?: boolean
+  requestDelete?: boolean
+  onDeleteRequestHandled?: () => void
+  commandsDisabled?: boolean
   onOpenTerminal?: () => void
 }) {
   const hasArtifact = (name: string) => 
@@ -358,6 +364,9 @@ export function TaskCard({
               {control ? (
                 <TaskActions 
                   key={task.id} 
+                  requestDelete={requestDelete}
+                  onDeleteRequestHandled={onDeleteRequestHandled}
+                  commandsDisabled={commandsDisabled}
                   control={control} 
                   transport={transport} 
                   session={session} 

@@ -17,12 +17,18 @@ export function TaskActions({
   transport,
   session,
   onRefresh,
+  requestDelete = false,
+  onDeleteRequestHandled,
+  commandsDisabled = false,
   modalAnswer = false
 }: {
   control: Control
   transport: Transport
   session?: Session
   onRefresh: () => void
+  requestDelete?: boolean
+  onDeleteRequestHandled?: () => void
+  commandsDisabled?: boolean
   modalAnswer?: boolean
 }) {
   const slot = pendingSlot(transport, `task:${control.task.id}`)
@@ -46,11 +52,16 @@ export function TaskActions({
   const [busy, setBusy] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  useEffect(() => {
+    if (!requestDelete || commandsDisabled) return
+    if (control.allowed_actions.includes('delete')) setDeleteOpen(true)
+    onDeleteRequestHandled?.()
+  }, [requestDelete, commandsDisabled, control.allowed_actions, onDeleteRequestHandled])
   const locked = useRef(false)
   const pending = useRef<PendingCommand | undefined>(restored)
 
   async function run(action?: string, targetBackend?: string) {
-    if (locked.current || !session?.csrf_token) return
+    if (commandsDisabled || locked.current || !session?.csrf_token) return
     if (action && pending.current) return
     if (!pending.current) {
       if (!action || !control.allowed_actions.includes(action)) return
@@ -132,7 +143,7 @@ export function TaskActions({
           <Button
             key={a}
             className="w-full flex items-center justify-center gap-1.5 cursor-pointer"
-            disabled={busy || Boolean(pending.current) || !session?.csrf_token}
+            disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token}
             onClick={() => void run(a)}
           >
             <AppIcon name="worker" />
@@ -142,26 +153,26 @@ export function TaskActions({
 
         {allowed.includes('delete') && (
           <>
-            <Button variant="outline" disabled={busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => setDeleteOpen(true)}>Удалить задачу</Button>
+            <Button variant="outline" disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => setDeleteOpen(true)}>Удалить задачу</Button>
             <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
               <AlertDialogContent>
                 <AlertDialogTitle>Удалить задачу TASK-{String(control.task.id).padStart(3, '0')}?</AlertDialogTitle>
                 <AlertDialogDescription>Задача будет перемещена во вкладку «Удалённые». История и файлы сохранятся.</AlertDialogDescription>
                 {message && <p role="alert">{message}</p>}
                 <AlertDialogCancel disabled={busy}>Отмена</AlertDialogCancel>
-                <Button disabled={busy || Boolean(pending.current)} onClick={() => void run('delete')}>Переместить в удалённые</Button>
+                <Button disabled={commandsDisabled || busy || Boolean(pending.current)} onClick={() => void run('delete')}>Переместить в удалённые</Button>
               </AlertDialogContent>
             </AlertDialog>
           </>
         )}
         {control.task.state === 'running' && <Button variant="outline" disabled title="Работающую задачу удалить нельзя">Удалить задачу</Button>}
-        {allowed.includes('restore') && <Button disabled={busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => void run('restore')}>Восстановить задачу</Button>}
+        {allowed.includes('restore') && <Button disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => void run('restore')}>Восстановить задачу</Button>}
 
         {allowed.includes('switch_backend') && (
           <Button
             variant="outline"
             className="w-full flex items-center justify-center gap-1.5 cursor-pointer border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40"
-            disabled={busy || Boolean(pending.current) || !session?.csrf_token}
+            disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token}
             onClick={() => void run('switch_backend', control.task.backend === 'gemini' ? 'codex' : 'gemini')}
           >
             <AppIcon name="worker" />
@@ -175,7 +186,7 @@ export function TaskActions({
               <Dialog.Trigger asChild>
                 <Button
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                  disabled={busy || Boolean(pending.current) || !session?.csrf_token}
+                  disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token}
                 >
                   <AppIcon name="worker" />
                   <span>Ответить на вопрос</span>
@@ -232,7 +243,7 @@ export function TaskActions({
                         <Button
                           size="sm"
                           className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
-                          disabled={busy || Boolean(pending.current) || !session?.csrf_token || !control.pending_question_id || !answer.trim() || !withinLimit(answer, 16384)}
+                          disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token || !control.pending_question_id || !answer.trim() || !withinLimit(answer, 16384)}
                           onClick={() => void run('answer')}
                         >
                           Отправить ответ
@@ -248,7 +259,7 @@ export function TaskActions({
               <label htmlFor="answer">Ответ на вопрос</label>
               <Textarea id="answer" value={answer} onChange={e => setAnswer(e.target.value)} disabled={busy} />
               <Button
-                disabled={busy || Boolean(pending.current) || !session?.csrf_token || !control.pending_question_id || !answer.trim() || !withinLimit(answer, 16384)}
+                disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token || !control.pending_question_id || !answer.trim() || !withinLimit(answer, 16384)}
                 onClick={() => void run('answer')}
               >
                 Отправить ответ
@@ -262,6 +273,7 @@ export function TaskActions({
           const widget = (
             <TrustedDecisionWidget
               control={control}
+              disabled={commandsDisabled}
               session={busy || pending.current ? undefined : session}
               project={transport.projectId}
               action={a}
@@ -293,7 +305,7 @@ export function TaskActions({
       {pending.current && (
         <div className="space-y-2 p-2 bg-amber-50 dark:bg-amber-950/40 rounded border border-amber-200 dark:border-amber-800 text-xs">
           <p>Ожидается результат команды «{label(pending.current.action)}». Повтор сохраняет исходные данные и версию.</p>
-          <Button size="sm" className="w-full text-xs" disabled={busy || !session?.csrf_token} onClick={() => void run()}>
+          <Button size="sm" className="w-full text-xs" disabled={commandsDisabled || busy || !session?.csrf_token} onClick={() => void run()}>
             Повторить команду / проверить результат
           </Button>
         </div>

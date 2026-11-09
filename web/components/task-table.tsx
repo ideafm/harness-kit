@@ -33,6 +33,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
   const projectName = data.projects?.items.find(p => p.id === data.projectId)?.name || 'tw-web'
   const projectBackend = (typeof data.status?.project === 'object' && data.status.project?.backend) || data.projects?.items.find(p => p.id === data.projectId)?.backend || 'codex'
 
+  const [deleteRequestedTask, setDeleteRequestedTask] = useState<number>()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [density, setDensity] = useState<'compact' | 'normal'>('compact')
@@ -59,6 +60,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
   useEffect(() => {
     setSearch('')
     setFilter('all')
+    setDeleteRequestedTask(undefined)
     setMobileCard(false)
   }, [data.projectId])
 
@@ -307,6 +309,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
                     selected={data.selected} 
                     onSelect={select}
                     density={density}
+                    onDelete={data.commandsDisabled ? undefined : id => { setDeleteRequestedTask(id); if (data.selected !== id) select(id) }}
                   />
                 ) : (
                   <p className="empty p-10 text-center text-xs text-zinc-500 dark:text-zinc-400">
@@ -336,6 +339,9 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
                   <TaskCard 
                     key={data.projectId} 
                     task={task} 
+                    requestDelete={deleteRequestedTask === task.id}
+                    onDeleteRequestHandled={() => setDeleteRequestedTask(undefined)}
+                    commandsDisabled={data.commandsDisabled}
                     control={data.control} 
                     transport={data.transport} 
                     session={data.session} 
@@ -392,11 +398,13 @@ export function TaskTable({
   tasks,
   selected,
   onSelect,
+  onDelete,
   density = 'compact'
 }: {
   tasks: Task[]
   selected?: number
   onSelect: (id: number) => void
+  onDelete?: (id: number) => void
   density?: 'compact' | 'normal'
 }) {
   return (
@@ -453,6 +461,15 @@ export function TaskTable({
           badgeLabel = 'Удалена'
           BadgeIcon = Trash2
         }
+
+        const deleteButton = t.state !== 'trashed' && (
+          <button type="button" aria-label={`Удалить задачу #${t.id}`} disabled={!onDelete || isRunning}
+            title={isRunning ? 'Работающую задачу удалить нельзя' : 'Переместить в удалённые'}
+            className="p-1 rounded text-zinc-400 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed"
+            onClick={event => { event.stopPropagation(); onDelete?.(t.id) }}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )
 
         if (density === 'compact') {
           return (
@@ -543,6 +560,7 @@ export function TaskTable({
                   <BadgeIcon className="w-2.5 h-2.5 shrink-0" />
                   <span className="truncate max-w-[80px]">{badgeLabel}</span>
                 </span>
+                {deleteButton}
 
               </div>
             </div>
@@ -601,6 +619,7 @@ export function TaskTable({
                   <BadgeIcon className="w-2.5 h-2.5 shrink-0" />
                   <span>{badgeLabel}</span>
                 </span>
+                {deleteButton}
               </div>
             </div>
 
