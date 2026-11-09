@@ -86,7 +86,6 @@ export function TopHeader({
             >
               <FolderGit2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
               <strong className="truncate max-w-[130px] font-semibold">{projectName}</strong>
-              <span className="shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200">Тест очереди A</span>
               <ChevronDown className="w-3 h-3 text-zinc-400 shrink-0" />
             </button>
 
