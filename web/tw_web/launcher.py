@@ -2,7 +2,14 @@ import argparse
 import fcntl
 import json
 import os
-import secrets
+try:
+    import secrets
+except (ImportError, OSError):
+    class _Secrets:
+        @staticmethod
+        def token_hex(n=32):
+            return os.urandom(n).hex()
+    secrets = _Secrets()
 import subprocess
 import sys
 import time

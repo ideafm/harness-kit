@@ -273,3 +273,16 @@ it('показывает только фактически разрешённы�
  expect(screen.queryByRole('button',{name:'Пауза'})).toBeNull()
  expect(post).not.toHaveBeenCalled()
 })
+
+it('поддерживает явный выбор бэкенда и отображает дефолтный бэкенд в форме создания',async()=>{
+ const onCreated=vi.fn()
+ const post=vi.fn().mockResolvedValue({task:{id:45},revision:'r1'})
+ render(<CreateTaskSheet transport={{get:vi.fn(),post} as Transport} session={{csrf_token:'csrf',confirmation_origin:'http://127.0.0.1:47832'}} enabled onCreated={onCreated} defaultBackend="gemini"/>)
+ fireEvent.click(screen.getByText('＋ Новая задача'))
+ expect(screen.getByText('По умолчанию (Gemini)')).toBeTruthy()
+ fireEvent.change(screen.getByLabelText('Запрос'),{target:{value:'Задача на кодексе'}})
+ fireEvent.change(screen.getByLabelText(/Исполнитель/),{target:{value:'codex'}})
+ fireEvent.click(screen.getByText('Создать задачу'))
+ await vi.waitFor(()=>expect(onCreated).toHaveBeenCalledWith(45))
+ expect(post).toHaveBeenCalledWith('tasks',{request:'Задача на кодексе',approval_mode:'approve-plan',backend:'codex'},expect.any(String),'csrf')
+})

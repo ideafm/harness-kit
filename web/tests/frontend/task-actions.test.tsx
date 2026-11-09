@@ -121,3 +121,14 @@ it('не отправляет команду, если невозможно со
  await screen.findByText('Не удалось сохранить команду. Отправка отменена.')
  expect(post).not.toHaveBeenCalled()
 })
+
+it('переключает исполнителя при доступности switch_backend',async()=>{
+ const post=vi.fn().mockResolvedValue({operation_id:'op-sw',status:'pending',task_id:1})
+ const get=vi.fn().mockResolvedValue({status:'succeeded'})
+ const props={control:{...control,task:{...control.task,backend:'codex'},allowed_actions:['switch_backend']},session,transport:{get,post} as Transport,onRefresh:vi.fn()}
+ render(<TaskActions {...props}/>)
+ expect(screen.getByText('Переключить на Gemini (Google)')).toBeTruthy()
+ fireEvent.click(screen.getByText('Переключить на Gemini (Google)'))
+ await screen.findByText('Команда выполнена контроллером')
+ expect(post).toHaveBeenCalledWith('tasks/1/actions',{action:'switch_backend',backend:'gemini'},expect.any(String),'csrf','r1')
+})

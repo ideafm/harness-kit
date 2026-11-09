@@ -47,12 +47,17 @@ export function TaskActions({
   const locked = useRef(false)
   const pending = useRef<PendingCommand | undefined>(restored)
 
-  async function run(action?: string) {
+  async function run(action?: string, targetBackend?: string) {
     if (locked.current || !session?.csrf_token) return
     if (action && pending.current) return
     if (!pending.current) {
       if (!action || !control.allowed_actions.includes(action)) return
-      const body = action === 'answer' ? { action, question_id: control.pending_question_id, text: answer } : { action }
+      let body: Record<string, unknown> = { action }
+      if (action === 'answer') {
+        body = { action, question_id: control.pending_question_id, text: answer }
+      } else if (action === 'switch_backend') {
+        body = { action, backend: targetBackend || (control.task.backend === 'gemini' ? 'codex' : 'gemini') }
+      }
       try {
         save({ action, taskId: control.task.id, body, revision: control.revision, key: crypto.randomUUID() })
       } catch {
@@ -62,7 +67,7 @@ export function TaskActions({
     }
     const command = pending.current
     if (!command) return
-    if (!['start', 'pause', 'resume', 'answer'].includes(command.action) || !['start', 'pause', 'resume', 'answer'].includes(String(command.body.action))) {
+    if (!['start', 'pause', 'resume', 'answer', 'switch_backend'].includes(command.action) || !['start', 'pause', 'resume', 'answer', 'switch_backend'].includes(String(command.body.action))) {
       setMessage('Решение доступно только в доверенной форме контроллера.')
       return
     }
@@ -131,6 +136,18 @@ export function TaskActions({
             {label(a)}
           </Button>
         ))}
+
+        {allowed.includes('switch_backend') && (
+          <Button
+            variant="outline"
+            className="w-full flex items-center justify-center gap-1.5 cursor-pointer border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40"
+            disabled={busy || Boolean(pending.current) || !session?.csrf_token}
+            onClick={() => void run('switch_backend', control.task.backend === 'gemini' ? 'codex' : 'gemini')}
+          >
+            <AppIcon name="worker" />
+            {control.task.backend === 'gemini' ? 'Переключить на Codex (OpenAI)' : 'Переключить на Gemini (Google)'}
+          </Button>
+        )}
 
         {allowed.includes('answer') && (
           modalAnswer ? (

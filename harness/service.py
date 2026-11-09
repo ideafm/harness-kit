@@ -29,6 +29,17 @@ class TaskService:
             raise ValueError("Проект не подключён: выполните tw init")
         self.store = Store(self.root)
 
+    @property
+    def default_backend(self):
+        config_path = self.store.home / "config.json"
+        if config_path.is_file() and not config_path.is_symlink():
+            try:
+                config = json.loads(config_path.read_text())
+                return validate_backend(config.get("backend", "codex"))
+            except Exception:
+                pass
+        return "codex"
+
     def close(self):
         self.store.db.close()
 
@@ -41,6 +52,8 @@ class TaskService:
                     "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order", "backend", "stage_backends", "model", "stage_models", "path_scope"):
             if key in data:
                 result[key] = data[key]
+        if 'backend' not in result:
+            result['backend'] = self.default_backend
         if task['state'] != 'rate_limited':
             result.pop('retry_at', None)
         if task['state'] in {'running', 'queued', 'review', 'accepted'}:

@@ -137,7 +137,7 @@ class WebApplication:
                         return self.json(200, operator.capabilities())
                     if parsed.path == '/api/v1/status':
                         status = service.status()
-                        status['project'] = {'id': project_id(root), 'name': root.name}
+                        status['project'] = {'id': project_id(root), 'name': root.name, 'backend': service.default_backend}
                         status['tasks'] = [dict(task, revision=operator.control(task['id'])['revision']) for task in status['tasks']]
                         return self.json(200, status)
                     match = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)(?:/(control|events|artifacts/([a-z]+)))?', parsed.path)

@@ -29,6 +29,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
   const tasks = [...rawTasks].sort((a, b) => b.id - a.id)
   const task = data.control?.task || tasks.find(t => t.id === data.selected)
   const projectName = data.projects?.items.find(p => p.id === data.projectId)?.name || 'tw-web'
+  const projectBackend = (typeof data.status?.project === 'object' && data.status.project?.backend) || data.projects?.items.find(p => p.id === data.projectId)?.backend || 'codex'
 
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
@@ -157,6 +158,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
             onCreated={select}
             open={isNewTaskOpen}
             onOpenChange={setIsNewTaskOpen}
+            defaultBackend={projectBackend}
           />
         </div>
       </div>
@@ -443,6 +445,16 @@ export function TaskTable({
                   #{t.id}
                 </span>
 
+                {t.backend && (
+                  <span className={`text-[10px] font-mono font-medium px-1.5 py-0.5 rounded border shrink-0 ${
+                    t.backend === 'gemini'
+                      ? 'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border-purple-200/60 dark:border-purple-800'
+                      : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-800'
+                  }`}>
+                    {t.backend === 'gemini' ? 'Gemini' : 'Codex'}
+                  </span>
+                )}
+
                 {/* Clickable Title / task-select button for accessibility & tests */}
                 <button
                   className="task-select text-left truncate flex-1 bg-transparent border-0 p-0 cursor-pointer focus:outline-none"
@@ -529,6 +541,18 @@ export function TaskTable({
                 </span>
                 <span className="text-zinc-300 dark:text-zinc-600">·</span>
                 <span className="text-zinc-700 dark:text-zinc-300">TASK-{t.id}</span>
+                {t.backend && (
+                  <>
+                    <span className="text-zinc-300 dark:text-zinc-600">·</span>
+                    <span className={`text-[10px] font-mono font-medium px-1.5 py-0.2 rounded border ${
+                      t.backend === 'gemini'
+                        ? 'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border-purple-200/60 dark:border-purple-800'
+                        : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-800'
+                    }`}>
+                      {t.backend === 'gemini' ? 'Gemini' : 'Codex'}
+                    </span>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-1.5">

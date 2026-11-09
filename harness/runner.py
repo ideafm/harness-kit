@@ -291,6 +291,12 @@ class Runner:
 
     def run(self, ident):
         with lock(self.store):
+            if (self.store.home / "config.json").is_file():
+                try:
+                    self.config = json.loads((self.store.home / "config.json").read_text())
+                    self.quota.config = self.config
+                except Exception:
+                    pass
             task = self.store.get(ident)
             if task["state"] not in {"queued", "rate_limited", "running"}:
                 raise ValueError(f"Задача в состоянии {task['state']}; используйте resume или answer")

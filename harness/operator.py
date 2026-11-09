@@ -12,7 +12,7 @@ from .state import StateChanged
 
 
 HIGH_ACTIONS = {'approve_plan', 'revise_plan', 'accept_result', 'request_changes', 'reject_result'}
-ACTIONS = {'start', 'pause', 'resume', 'answer'} | HIGH_ACTIONS
+ACTIONS = {'start', 'pause', 'resume', 'answer', 'switch_backend'} | HIGH_ACTIONS
 
 
 class OperatorError(ValueError):
@@ -46,6 +46,8 @@ class Operator:
             actions.append('resume')
         if state == 'waiting':
             actions.append('answer')
+        if state in {'paused', 'rate_limited'}:
+            actions.append('switch_backend')
         if state == 'awaiting_approval':
             actions.append('approve_plan')
             if not data.get('attempts', {}).get('implement', 0):
@@ -123,6 +125,7 @@ class Operator:
     def validate(self, action, payload):
         keys = {'submit': {'request', 'approval_mode'}, 'start': {'action'}, 'pause': {'action'},
                 'resume': {'action'}, 'answer': {'action', 'question_id', 'text'},
+                'switch_backend': {'action', 'backend'},
                 'approve_plan': {'action', 'plan_version', 'plan_digest'},
                 'revise_plan': {'action', 'plan_version', 'plan_digest', 'feedback'},
                 'accept_result': {'action', 'result_version', 'result_digest'},
@@ -132,6 +135,13 @@ class Operator:
             keys = keys | {'placement'}
             if payload['placement'] not in ('queue', 'backlog'):
                 raise OperatorError('invalid_request', 'Нужно выбрать queue или backlog')
+        if action == 'submit' and 'backend' in payload:
+            keys = keys | {'backend'}
+            if payload['backend'] not in ('codex', 'gemini'):
+                raise OperatorError('invalid_request', 'Нужно выбрать codex или gemini')
+        if action == 'switch_backend':
+            if payload.get('backend') not in ('codex', 'gemini'):
+                raise OperatorError('invalid_request', 'Нужно выбрать codex или gemini')
         if set(payload) != keys:
             raise OperatorError('invalid_request', 'Некорректные поля действия')
         for field in ('request', 'text', 'feedback', 'reason'):
@@ -144,7 +154,7 @@ class Operator:
     def dispatch(self, action, ident, payload):
         if action == 'submit':
             return self.service.submit(payload['request'], approval_mode=payload['approval_mode'],
-                placement=payload.get('placement', 'queue'))['task']['id']
+                placement=payload.get('placement', 'queue'), backend=payload.get('backend'))['task']['id']
         control = self.control(ident)
         if action == 'answer' and payload['question_id'] != control['pending_question_id']:
             raise OperatorError('stale_question', 'Вопрос изменился', 409)
@@ -157,6 +167,23 @@ class Operator:
             self.service.operate(action, ident, payload.get('text'))
         elif action == 'start':
             self.service.start(ident)
+        elif action == 'switch_backend':
+            target_backend = payload['backend']
+            task = self.store.get(ident)
+            previous_backend = task['data'].get('backend')
+            previous_state = task['state']
+            task['data']['backend'] = target_backend
+            if task['state'] == 'rate_limited':
+                task['state'] = 'queued'
+                task['data'].pop('retry_at', None)
+                task['data'].pop('reason', None)
+            self.store.save(task, 'backend_switched', {'from': previous_backend, 'to': target_backend},
+                            expected=previous_state, expected_updated=task['updated'])
+            if previous_state == 'rate_limited':
+                try:
+                    self.service.start(ident)
+                except Exception:
+                    pass
         elif action == 'approve_plan':
             approve(self.store, ident, payload['plan_version'], f'TASK-{ident:03}')
             self.service.start(ident)

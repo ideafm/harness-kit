@@ -14,7 +14,8 @@ export function CreateTaskSheet({
   enabled,
   onCreated,
   open: controlledOpen,
-  onOpenChange: controlledOnOpenChange
+  onOpenChange: controlledOnOpenChange,
+  defaultBackend = 'codex'
 }: {
   transport: Transport
   session?: Session
@@ -22,6 +23,7 @@ export function CreateTaskSheet({
   onCreated: (id: number) => void
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  defaultBackend?: string
 }) {
   const active = useRef(true)
   useEffect(() => {
@@ -48,7 +50,7 @@ export function CreateTaskSheet({
 
   const [text, setText] = useState(restored?.body.request ?? '')
   const [mode, setMode] = useState(restored?.body.approval_mode ?? 'approve-plan')
-  const [model, setModel] = useState('codex')
+  const [backend, setBackend] = useState(restored?.body.backend ?? 'default')
   const [autoStart, setAutoStart] = useState(restored?.body.placement ? restored.body.placement !== 'backlog' : true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -60,9 +62,12 @@ export function CreateTaskSheet({
     lock.current = true
     setBusy(true)
     setError('')
-    const body: { request: string; approval_mode: string; placement?: string } = {
+    const body: { request: string; approval_mode: string; placement?: string; backend?: string } = {
       request: text,
       approval_mode: mode
+    }
+    if (backend !== 'default') {
+      body.backend = backend
     }
     if (!autoStart) {
       body.placement = 'backlog'
@@ -155,34 +160,27 @@ export function CreateTaskSheet({
               )}
             </div>
 
-            {/* Model & Approval Mode grid */}
+            {/* Backend & Approval Mode grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label htmlFor="model" className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
+                <label htmlFor="backend" className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
                     <Cpu className="w-3 h-3 text-purple-500" />
-                    <span>Модель рассуждений</span>
+                    <span>Исполнитель (Агент)</span>
                   </span>
-                  <span className="text-[10px] font-normal text-zinc-400 dark:text-zinc-500">скоро</span>
                 </label>
                 <select
-                  id="model"
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  disabled={true}
-                  title="Выбор модели на уровне задачи пока не поддерживается API; используется модель из конфигурации воркера"
-                  className="w-full text-xs px-2.5 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900/60 text-zinc-500 dark:text-zinc-400 cursor-not-allowed opacity-75 focus:outline-none"
+                  id="backend"
+                  value={backend}
+                  onChange={e => setBackend(e.target.value)}
+                  disabled={busy}
+                  className="w-full text-xs px-2.5 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
                 >
-                  <optgroup label="Codex">
-                    <option value="codex">Codex (по умолчанию)</option>
-                    <option value="codex-o3-mini">Codex (o3-mini / High Reasoning)</option>
-                    <option value="codex-gpt-4o">Codex (GPT-4o / Fast)</option>
-                  </optgroup>
-                  <optgroup label="Gemini">
-                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Reasoning)</option>
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Fast Execution)</option>
-                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Balanced)</option>
-                  </optgroup>
+                  <option value="default">
+                    {`По умолчанию (${defaultBackend === 'gemini' ? 'Gemini' : 'Codex'})`}
+                  </option>
+                  <option value="gemini">Gemini (Google)</option>
+                  <option value="codex">Codex (OpenAI)</option>
                 </select>
               </div>
 

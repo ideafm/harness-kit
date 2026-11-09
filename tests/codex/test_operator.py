@@ -119,6 +119,50 @@ class OperatorTests(unittest.TestCase):
         self.assertEqual(self.service.show(1)['state'], 'queued')
         self.assertEqual(self.operator.operation(record['operation_id']), record)
 
+    def test_submit_accepts_explicit_backend_and_rejects_invalid(self):
+        with patch.object(self.service, 'start', side_effect=lambda ident: {'task': self.service.show(ident)}):
+            gemini_res = self.operator.perform(None, {'request': 'gemini task', 'approval_mode': 'auto', 'backend': 'gemini'}, 'key-gemini-1')
+            gemini_task = self.service.store.get(gemini_res['task_id'])
+            self.assertEqual(gemini_task['data']['backend'], 'gemini')
+            self.assertEqual(self.service.show(gemini_res['task_id'])['backend'], 'gemini')
+
+            codex_res = self.operator.perform(None, {'request': 'codex task', 'approval_mode': 'auto', 'backend': 'codex'}, 'key-codex-1')
+            codex_task = self.service.store.get(codex_res['task_id'])
+            self.assertEqual(codex_task['data']['backend'], 'codex')
+            self.assertEqual(self.service.show(codex_res['task_id'])['backend'], 'codex')
+
+            with self.assertRaises(OperatorError) as err:
+                self.operator.perform(None, {'request': 'bad task', 'approval_mode': 'auto', 'backend': 'unknown'}, 'key-bad-1')
+            self.assertEqual(err.exception.status, 400)
+
+    def test_switch_backend_updates_task_and_resets_rate_limit(self):
+        self.service.store.pause(1)
+        control = self.operator.control(1)
+        self.assertIn('switch_backend', control['allowed_actions'])
+        res = self.operator.perform(1, {'action': 'switch_backend', 'backend': 'gemini'}, 'key-switch-1', control['revision'])
+        self.assertEqual(res['status'], 'succeeded')
+        updated = self.service.store.get(1)
+        self.assertEqual(updated['data']['backend'], 'gemini')
+        events = self.service.store.events(1)
+        self.assertEqual(events[-1]['kind'], 'backend_switched')
+        self.assertEqual(events[-1]['data']['to'], 'gemini')
+
+        task = self.service.store.get(1)
+        task['state'] = 'rate_limited'
+        task['data']['retry_at'] = 9999999999.0
+        task['data']['reason'] = 'Quota exceeded'
+        self.service.store.save(task, 'rate_limited')
+        control_rl = self.operator.control(1)
+        self.assertIn('switch_backend', control_rl['allowed_actions'])
+        with patch.object(self.service, 'start') as mock_start:
+            res_rl = self.operator.perform(1, {'action': 'switch_backend', 'backend': 'codex'}, 'key-switch-2', control_rl['revision'])
+            self.assertEqual(res_rl['status'], 'succeeded')
+            mock_start.assert_called_once_with(1)
+        after_rl = self.service.store.get(1)
+        self.assertEqual(after_rl['state'], 'queued')
+        self.assertEqual(after_rl['data']['backend'], 'codex')
+        self.assertNotIn('retry_at', after_rl['data'])
+
 
 class WebTests(unittest.TestCase):
     def setUp(self):
@@ -235,3 +279,10 @@ class WebTests(unittest.TestCase):
         payload = json.dumps({'action': 'approve_plan', 'plan_version': control['plan']['version'], 'plan_digest': control['plan']['digest']}).encode()
         self.assertEqual(self.app.dispatch('POST', '/api/v1/tasks/1/actions', headers, payload)[0], 403)
         self.assertEqual(self.fixture.store.get(1)['state'], 'awaiting_approval')
+
+    def test_status_exposes_project_backend(self):
+        status, _, body = self.app.dispatch('GET', '/api/v1/status', self.headers)
+        self.assertEqual(status, 200)
+        data = json.loads(body)['data']
+        self.assertIn('backend', data['project'])
+        self.assertEqual(data['project']['backend'], 'codex')

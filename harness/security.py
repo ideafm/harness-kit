@@ -195,15 +195,16 @@ def seatbelt_profile(workspace, writable, extra_read=(), allow_hidden_in_workspa
     hidden_roots = [re.escape(path) for path in sorted(hidden_targets)]
     hidden_patterns = [f"^{root}/(.*/)?\\.[^/]+(/.*)?$" for root in hidden_roots]
     hidden_rules = " ".join(f"(regex {seatbelt_quote_regex(pattern)})" for pattern in hidden_patterns)
-    secret_regex = (
-        "^/(.*/)?("
+    secret_body = (
         "[^/]*\\.[Ee][Nn][Vv](\\.[^/]+)?|"
         "[^/]*\\.([Pp][Ee][Mm]|[Kk][Ee][Yy]|[Pp]12|[Pp][Ff][Xx])|"
         "[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss][^/]*|"
         "[Ss][Ee][Cc][Rr][Ee][Tt][^/]*|"
         "[Ii][Dd]_([Rr][Ss][Aa]|[Ee][Dd]25519|[Ee][Cc][Dd][Ss][Aa])[^/]*"
-        ")(/.*)?$"
     )
+    secret_roots = [re.escape(path) for path in sorted({resolved, *extra_resolved})]
+    secret_patterns = [f"^{root}/(.*/)?({secret_body})(/.*)?$" for root in secret_roots]
+    secret_rules = " ".join(f"(regex {seatbelt_quote_regex(pattern)})" for pattern in secret_patterns)
     return (
         "(version 1)\n"
         "(deny default)\n"
@@ -212,7 +213,7 @@ def seatbelt_profile(workspace, writable, extra_read=(), allow_hidden_in_workspa
         f"(allow file-read* (literal \"/\") {read_rules} (subpath {json.dumps(resolved)}))\n"
         "(allow file-write-data (literal \"/dev/null\") (literal \"/dev/tty\"))\n"
         f"{write_rule}"
-        f"(deny file-read* file-write* {hidden_rules} (regex {seatbelt_quote_regex(secret_regex)}))\n"
+        f"(deny file-read* file-write* {hidden_rules} {secret_rules})\n"
     )
 
 

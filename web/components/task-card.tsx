@@ -138,9 +138,9 @@ export function TaskCard({
           <span className="text-zinc-300 dark:text-zinc-700">·</span>
 
           {/* Runner Engine Tag */}
-          <div className="flex items-center gap-1 text-[11px] font-mono text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 px-2 py-0.5 rounded border border-purple-200/50 dark:border-purple-900/40" title="Автономный раннер: codex">
+          <div className="flex items-center gap-1 text-[11px] font-mono text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 px-2 py-0.5 rounded border border-purple-200/50 dark:border-purple-900/40" title={`Автономный раннер: ${task.backend || 'codex'}`}>
             <Cpu className="w-3 h-3" />
-            <span>codex</span>
+            <span>{task.backend === 'gemini' ? 'gemini' : 'codex'}</span>
           </div>
 
           <span className="text-zinc-300 dark:text-zinc-700">·</span>
