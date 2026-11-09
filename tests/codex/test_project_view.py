@@ -279,6 +279,19 @@ class ProjectViewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.view.selection()
 
+    def test_foreign_project_id_in_selection_ignored_and_overwritable(self):
+        (self.view.home / 'selection.json').unlink(missing_ok=True)
+        (self.view.home / 'selection.json').write_text(json.dumps({
+            'project_id': '0' * 16,
+            'task': 1,
+            'mode': 'checked',
+            'revision': 'abc'
+        }))
+        self.assertIsNone(self.view.selection())
+        new_sel = self.view.select(1, 'working')
+        self.assertEqual(new_sel['project_id'], self.view.ident)
+        self.assertEqual(self.view.selection(), new_sel)
+
     def test_source_changes_during_checks_are_not_published_as_checked(self):
         self.fixture.task = self.store.add('another task')
         def mutate(workspace, folder):

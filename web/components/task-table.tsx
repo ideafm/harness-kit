@@ -330,6 +330,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
                     events={data.capabilities?.events ?? false} 
                     projectView={data.capabilities?.project_view === true} 
                     onRefresh={() => void data.refresh()} 
+                    onOpenTerminal={() => setIsTerminalOpen(true)}
                   />
                 </>
               ) : (

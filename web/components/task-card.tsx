@@ -19,7 +19,8 @@ import {
   ChevronDown,
   ArrowRight,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Terminal
 } from 'lucide-react'
 
 export function TaskCard({
@@ -29,7 +30,8 @@ export function TaskCard({
   session,
   onRefresh,
   events = false,
-  projectView = false
+  projectView = false,
+  onOpenTerminal
 }: {
   task: Task
   control?: Control
@@ -38,6 +40,7 @@ export function TaskCard({
   onRefresh: () => void
   events?: boolean
   projectView?: boolean
+  onOpenTerminal?: () => void
 }) {
   const hasArtifact = (name: string) => 
     Array.isArray(task.artifacts) 
@@ -49,6 +52,21 @@ export function TaskCard({
 
   const [copiedKey, setCopiedKey] = useState(false)
   const [copiedBranch, setCopiedBranch] = useState(false)
+  const [copiedWatch, setCopiedWatch] = useState(false)
+  const [copiedLog, setCopiedLog] = useState(false)
+  const watchCommand = task.observation?.terminal_command || `./bin/tw --project web watch ${task.id}`
+
+  const handleCopyWatch = () => {
+    navigator.clipboard.writeText(watchCommand)
+    setCopiedWatch(true)
+    setTimeout(() => setCopiedWatch(false), 2000)
+  }
+
+  const handleCopyLog = () => {
+    navigator.clipboard.writeText('tail -f web/.harness/worker.log')
+    setCopiedLog(true)
+    setTimeout(() => setCopiedLog(false), 2000)
+  }
   const [selectedTab, setSelectedTab] = useState<string>(defaultTab)
   const [selectedStage, setSelectedStage] = useState<string | undefined>(undefined)
   const actions = control?.allowed_actions || []
@@ -404,6 +422,93 @@ export function TaskCard({
           </div>
         )}
       </div>
+
+      {/* Observation & Terminal Commands Block */}
+      <section 
+        className="observation-block rounded-xl border border-zinc-200/90 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/40 p-4 space-y-3"
+        aria-label="Наблюдение за выполнением задачи"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Terminal className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+            <h3 className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">
+              Команды наблюдения в терминале
+            </h3>
+          </div>
+          {onOpenTerminal && (
+            <button
+              type="button"
+              onClick={onOpenTerminal}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline cursor-pointer"
+            >
+              <span>Открыть консоль воркера</span>
+              <ArrowRight className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
+        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+          Следить за ходом работы модели, этапами, вызовом инструментов и проверками в реальном времени:
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+          {/* Watch Task Stages */}
+          <div className="p-2.5 rounded-lg bg-zinc-900 dark:bg-zinc-950 border border-zinc-800 text-zinc-200 font-mono text-[11px] space-y-1">
+            <div className="flex items-center justify-between text-[10px] text-zinc-400 uppercase font-sans font-medium">
+              <span>События и этапы задачи</span>
+              <button
+                type="button"
+                onClick={handleCopyWatch}
+                className="inline-flex items-center gap-1 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                title="Скопировать команду tw watch"
+              >
+                {copiedWatch ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span className="text-emerald-400">Скопировано</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>Скопировать</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="truncate text-xs font-mono text-zinc-100 selection:bg-blue-600 select-all py-0.5">
+              {watchCommand}
+            </div>
+          </div>
+
+          {/* Worker Log */}
+          <div className="p-2.5 rounded-lg bg-zinc-900 dark:bg-zinc-950 border border-zinc-800 text-zinc-200 font-mono text-[11px] space-y-1">
+            <div className="flex items-center justify-between text-[10px] text-zinc-400 uppercase font-sans font-medium">
+              <span>Системный лог воркера</span>
+              <button
+                type="button"
+                onClick={handleCopyLog}
+                className="inline-flex items-center gap-1 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                title="Скопировать команду лога"
+              >
+                {copiedLog ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span className="text-emerald-400">Скопировано</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>Скопировать</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="truncate text-xs font-mono text-zinc-100 selection:bg-blue-600 select-all py-0.5">
+              tail -f web/.harness/worker.log
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* 5. Materials Tabs matching reference */}
       <section aria-label="Детали и артефакты" className="pt-2">

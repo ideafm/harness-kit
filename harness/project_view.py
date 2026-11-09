@@ -125,7 +125,9 @@ class ProjectView:
 
     def selection(self):
         value = self.read('selection.json')
-        if value is not None and (value.get('project_id') != self.ident or type(value.get('task')) is not int
+        if value is not None and value.get('project_id') != self.ident:
+            return None
+        if value is not None and (type(value.get('task')) is not int
                 or value['task'] < 1 or value.get('mode') not in {'working', 'checked'}
                 or not isinstance(value.get('revision'), str)):
             raise ValueError('Некорректный выбор просмотра')
@@ -150,7 +152,10 @@ class ProjectView:
         with self.lock('selection.lock', True):
             if expected is not None and self.control_revision(ident) != expected:
                 raise OperatorError('stale_revision', 'Просмотр или задача изменились. Обновите карточку', 409)
-            previous = self.selection()
+            try:
+                previous = self.selection()
+            except ValueError:
+                previous = None
             if previous and previous['task'] == ident and previous['mode'] == mode and not refresh:
                 return previous
             selection = {'project_id': self.ident, 'task': ident, 'mode': mode, 'revision': selection_revision or uuid.uuid4().hex}
@@ -179,9 +184,13 @@ class ProjectView:
 
     def status(self):
         state = self.read('status.json', dict(self.state))
+        if state.get('project_id') != self.ident:
+            state = dict(self.state)
         state.update(url=self.url, requested=self.selection(), running=self.running())
         if state['running']:
-            self.request(self.read('server.json'))
+            server_record = self.read('server.json')
+            if server_record and server_record.get('project_id') == self.ident:
+                self.request(server_record)
         return state
 
     def start(self):

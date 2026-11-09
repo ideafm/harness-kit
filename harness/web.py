@@ -30,8 +30,10 @@ class WebApplication:
         self.root = Path(root).resolve()
         self.instance = instance
         self.assets = Path(assets).resolve()
-        self.manifest = json.loads(Path(receipt).read_text())['assets']
+        receipt_bytes = Path(receipt).read_bytes()
+        self.manifest = json.loads(receipt_bytes)['assets']
         self.receipt = str(Path(receipt).resolve())
+        self.receipt_sha256 = hashlib.sha256(receipt_bytes).hexdigest()
         self.track_deployment = track_deployment
         self.csrf = secrets.token_hex(32)
         self.cookie = secrets.token_hex(32)
@@ -207,11 +209,14 @@ class WebApplication:
             if deployment_path.is_symlink():
                 raise OperatorError('invalid_build', 'Состояние сборки заменено ссылкой', 503)
             deployment = json.loads(deployment_path.read_text())
-            if str(Path(deployment['receipt']).resolve()) != self.receipt:
-                candidate = WebApplication(self.root, self.instance, deployment['export'], deployment['receipt'])
+            receipt_path = Path(deployment['receipt']).resolve()
+            receipt_bytes = receipt_path.read_bytes()
+            receipt_sha256 = hashlib.sha256(receipt_bytes).hexdigest()
+            if str(receipt_path) != self.receipt or receipt_sha256 != getattr(self, 'receipt_sha256', None):
+                candidate = WebApplication(self.root, self.instance, deployment['export'], str(receipt_path))
                 candidate.static('/')
                 with self.guard:
-                    self.assets, self.manifest, self.receipt = candidate.assets, candidate.manifest, candidate.receipt
+                    self.assets, self.manifest, self.receipt, self.receipt_sha256 = candidate.assets, candidate.manifest, candidate.receipt, candidate.receipt_sha256
         relative = 'index.html' if request_path == '/' else request_path.lstrip('/')
         path = Path(relative)
         if path.is_absolute() or '..' in path.parts or any(p.startswith('.') for p in path.parts) or relative not in self.manifest:

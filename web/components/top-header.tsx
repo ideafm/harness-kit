@@ -191,6 +191,26 @@ export function TopHeader({
           <span className="text-[10px] font-mono opacity-75">:47831</span>
         </div>
 
+        {/* CLI Terminal Toggle */}
+        {onToggleTerminal && (
+          <button
+            type="button"
+            onClick={onToggleTerminal}
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono font-medium border transition-colors cursor-pointer ${
+              isTerminalOpen
+                ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 border-zinc-900 dark:border-zinc-100'
+                : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+            }`}
+            title="Открыть консоль и наблюдение за воркером"
+          >
+            <span className="text-zinc-400 font-bold">&gt;_</span>
+            <span>Консоль</span>
+            {isWorkerRunning && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            )}
+          </button>
+        )}
+
         {/* Refresh Button */}
         <button
           type="button"

@@ -20,7 +20,15 @@ def prepare_worktree(store, task):
         if record != {'branch': branch, 'base': task['data']['base'], 'path': str(destination)}:
             raise ValueError('Worktree не соответствует задаче')
         if not destination.exists():
-            git(store.root, 'worktree', 'add', '--no-checkout', str(destination), branch)
+            try:
+                git(store.root, 'rev-parse', '--verify', branch)
+                has_branch = True
+            except subprocess.CalledProcessError:
+                has_branch = False
+            if has_branch:
+                git(store.root, 'worktree', 'add', '--no-checkout', str(destination), branch)
+            else:
+                git(store.root, 'worktree', 'add', '--no-checkout', '-b', branch, str(destination), task['data']['base'])
             git(destination, 'read-tree', task['data']['base'])
             export_snapshot(store.root, destination, task['data']['base'])
         if git(destination, 'symbolic-ref', '--short', 'HEAD').decode().strip() != branch:
@@ -60,7 +68,8 @@ def commit_accepted(store, ident):
             raise ValueError('Коммит разрешён только после приёмки результата')
         data = task['data']
         folder = store.folder(ident)
-        Runner(store).report(task)
+        runner = Runner(store)
+        runner.report(task)
         receipt = data.get('check_receipt', {})
         if receipt.get('exit_code') != 0 or data['changes'] != receipt.get('changes'):
             raise ValueError('Результат не совпадает с проверенным')
@@ -72,7 +81,9 @@ def commit_accepted(store, ident):
         if data.get('frontend_toolchain'):
             from .node import source_digest
             frontend = json.loads((folder / 'frontend-receipt.json').read_text())
-            if frontend['source_digest'] != source_digest(workspace):
+            scope_dir = runner.task_scope_dir(task)
+            scope_workspace = (workspace / scope_dir) if scope_dir else workspace
+            if frontend['source_digest'] != source_digest(scope_workspace):
                 raise ValueError('Результат отличается от собранного')
         record_path = folder / 'git-result.json'
         if record_path.is_symlink():
