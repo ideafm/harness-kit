@@ -5,6 +5,7 @@ import { httpTransport } from '@/lib/http-transport'
 import { useTaskData } from '@/hooks/use-task-data'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ProjectSidebar } from './project-sidebar'
+import { AutoApplySetting } from './auto-apply-setting'
 import { BatchActions } from './batch-actions'
 import { TaskCard } from './task-card'
 import { CreateTaskSheet } from './create-task-sheet'
@@ -182,6 +183,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
         </div>
       </div>
 
+      <AutoApplySetting policy={data.status?.auto_apply} project={data.projectId} session={data.session} disabled={data.commandsDisabled} onRefresh={()=>void data.refresh()}/>
       {data.error && (
         <div role="alert" className="mx-6 mt-4 p-3.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs shrink-0">
           {data.error}. Последние полученные данные могут быть устаревшими.

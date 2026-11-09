@@ -234,6 +234,9 @@ def dispatch_store(args, store):
     elif action == "worker":
         runner = Runner(store, backend_name=getattr(args, "backend", None))
         with lock(store, "worker.lock"):
+            from .auto_apply import recover
+            if not (store.home / "worker.stop").exists():
+                recover(store)
             while True:
                 if (store.home / "worker.stop").exists():
                     break
@@ -306,6 +309,7 @@ def dispatch_store(args, store):
             if previous != data["changes"]:
                 raise ValueError("Рабочая копия изменилась после ревью; приёмка запрещена")
             task["state"] = "accepted"
+            data["accepted_by"] = "human"
             store.save(task, "accepted", expected=initial_state, expected_updated=task['updated'])
             if not store.db.in_transaction:
                 from .git_results import commit_if_enabled

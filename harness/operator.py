@@ -141,6 +141,10 @@ class Operator:
             keys = keys | {'placement'}
             if payload['placement'] not in ('queue', 'backlog'):
                 raise OperatorError('invalid_request', 'Нужно выбрать queue или backlog')
+        if action == 'submit' and 'manual_acceptance' in payload:
+            keys = keys | {'manual_acceptance'}
+            if type(payload['manual_acceptance']) is not bool:
+                raise OperatorError('invalid_request', 'Ожидается логическое manual_acceptance')
         if action == 'submit' and 'backend' in payload:
             keys = keys | {'backend'}
             if payload['backend'] not in ('codex', 'gemini'):
@@ -160,7 +164,7 @@ class Operator:
     def dispatch(self, action, ident, payload):
         if action == 'submit':
             return self.service.submit(payload['request'], approval_mode=payload['approval_mode'],
-                placement=payload.get('placement', 'queue'), backend=payload.get('backend'))['task']['id']
+                placement=payload.get('placement', 'queue'), backend=payload.get('backend'), manual_acceptance=payload.get('manual_acceptance', False))['task']['id']
         control = self.control(ident)
         if action == 'answer' and payload['question_id'] != control['pending_question_id']:
             raise OperatorError('stale_question', 'Вопрос изменился', 409)

@@ -360,6 +360,9 @@ export function TaskCard({
               </div>
             )}
 
+            {['automatic','human'].includes(task.accepted_by || '') && <p className="text-xs text-zinc-500">{task.accepted_by === 'automatic' ? (task.integration && !task.integration_error && !task.commit_error && !task.auto_apply_error ? 'Применено автоматически' : 'Автоматическая приёмка; применение требует проверки') : 'Принято пользователем'}</p>}
+            {task.auto_apply_error && <p role="alert">Автоприменение остановлено: {task.auto_apply_error}</p>}
+            {task.manual_acceptance && <p className="text-xs">Обязательная ручная приёмка</p>}
             <section aria-label="Доступные действия" className="available-actions flex flex-col items-stretch gap-2 w-full">
               {control ? (
                 <TaskActions 

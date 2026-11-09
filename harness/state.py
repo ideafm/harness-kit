@@ -33,6 +33,9 @@ class Store:
                 task INTEGER NOT NULL, time REAL NOT NULL,
                 kind TEXT NOT NULL, data TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS project_policy (
+                id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS operations (
                 id TEXT PRIMARY KEY, request_key TEXT UNIQUE NOT NULL,
                 payload_hash TEXT NOT NULL, data TEXT NOT NULL
@@ -64,7 +67,9 @@ class Store:
         if (stat.st_dev, stat.st_ino) != self.identity:
             raise RuntimeError("Экземпляр проекта заменён; перезапустите контроллер")
 
-    def add(self, request, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None):
+    def add(self, request, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False):
+        if type(manual_acceptance) is not bool:
+            raise ValueError("manual_acceptance должен быть логическим значением")
         from .approval import validate_mode
         from .security import normalize_scope, validate_backend
         validate_mode(approval_mode)
@@ -99,6 +104,8 @@ class Store:
         self.ensure_current()
         with self.transaction():
             data = {"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode, "backend": selected_backend}
+            if manual_acceptance:
+                data["manual_acceptance"] = True
             if validated_stage_backends:
                 data["stage_backends"] = validated_stage_backends
             if model is not None:

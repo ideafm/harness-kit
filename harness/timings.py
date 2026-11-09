@@ -22,7 +22,7 @@ def stage_timings(task, events, now=None):
             active = None
         if kind == 'stage_finished' and data.get('next') == 'done':
             acceptance = stamp
-        if acceptance is not None and kind in {'accepted', 'rejected', 'changes_requested', 'task_deleted'}:
+        if acceptance is not None and kind in {'accepted', 'automatically_accepted', 'rejected', 'changes_requested', 'task_deleted'}:
             totals['acceptance'] = totals.get('acceptance', 0) + max(0, stamp - acceptance)
             acceptance = None
     if active and task['state'] == 'running' and task['stage'] == active[0]:

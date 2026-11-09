@@ -51,6 +51,7 @@ export function CreateTaskSheet({
   const [text, setText] = useState(restored?.body.request ?? '')
   const [mode, setMode] = useState(restored?.body.approval_mode ?? 'approve-plan')
   const [backend, setBackend] = useState(restored?.body.backend ?? 'default')
+  const [manualAcceptance,setManualAcceptance] = useState(restored?.body.manual_acceptance ?? false)
   const [autoStart, setAutoStart] = useState(restored?.body.placement ? restored.body.placement !== 'backlog' : true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -62,10 +63,11 @@ export function CreateTaskSheet({
     lock.current = true
     setBusy(true)
     setError('')
-    const body: { request: string; approval_mode: string; placement?: string; backend?: string } = {
+    const body: { request: string; approval_mode: string; placement?: string; backend?: string; manual_acceptance?: boolean } = {
       request: text,
       approval_mode: mode
     }
+    if (manualAcceptance) body.manual_acceptance = true
     if (backend !== 'default') {
       body.backend = backend
     }
@@ -202,6 +204,10 @@ export function CreateTaskSheet({
               </div>
             </div>
 
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={manualAcceptance} onChange={event=>setManualAcceptance(event.target.checked)} disabled={busy}/>
+              Обязательно показать мне перед применением
+            </label>
             {/* Auto Start Checkbox */}
             <div className="flex items-center gap-2 pt-0.5">
               <input

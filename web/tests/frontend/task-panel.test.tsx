@@ -347,3 +347,14 @@ it('чекбоксы выбирают видимые неработающие з
  fireEvent.change(screen.getByLabelText('Поиск задач'),{target:{value:'Работающая'}})
  expect(screen.getByText('Выбрано: 0')).toBeTruthy()
 })
+
+it('создание сохраняет обязательную ручную приёмку в запросе',async()=>{
+ const post=vi.fn().mockResolvedValue({task:{id:1},revision:'r1'})
+ render(<CreateTaskSheet transport={{get:vi.fn(),post}} session={{csrf_token:'csrf',confirmation_origin:'http://127.0.0.1:47832'}} enabled onCreated={vi.fn()}/> )
+ fireEvent.click(screen.getByText('＋ Новая задача'))
+ fireEvent.change(screen.getByLabelText('Запрос'),{target:{value:'Только ручная приёмка'}})
+ fireEvent.click(screen.getByLabelText('Обязательно показать мне перед применением'))
+ fireEvent.click(screen.getByText('Создать задачу'))
+ await vi.waitFor(()=>expect(post).toHaveBeenCalledTimes(1))
+ expect(post.mock.calls[0][1].manual_acceptance).toBe(true)
+})

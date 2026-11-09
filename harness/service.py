@@ -51,7 +51,7 @@ class TaskService:
         result['stage_timings'] = stage_timings(task, self.store.events(task['id']))
         result['observation'] = descriptor(self.root, task['id'])
         for key in ("request", "question", "question_kind", "reason", "retry_at", "implementation_summary", "review_verdict",
-                    "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order", "backend", "stage_backends", "model", "stage_models", "path_scope"):
+                    "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order", "backend", "stage_backends", "model", "stage_models", "path_scope", "accepted_by", "manual_acceptance", "auto_apply_error"):
             if key in data:
                 result[key] = data[key]
         if 'backend' not in result:
@@ -146,7 +146,7 @@ class TaskService:
                 status = {"running": True, "pid": process.pid}
         return {"task": self.show(ident), "worker": status}
 
-    def submit(self, request, start=True, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None):
+    def submit(self, request, start=True, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False):
         if not isinstance(request, str) or not request.strip() or len(request) > 50000:
             raise ValueError("Нужен текст задачи от 1 до 50000 символов")
         if type(start) is not bool:
@@ -162,6 +162,7 @@ class TaskService:
             model=model,
             stage_models=stage_models,
             scope=scope,
+            manual_acceptance=manual_acceptance,
         )
         if start and placement == 'queue':
             try:

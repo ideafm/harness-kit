@@ -139,6 +139,9 @@ class WebApplication:
                         return self.json(200, operator.capabilities())
                     if parsed.path == '/api/v1/status':
                         status = service.status()
+                        from .auto_apply import policy
+                        status['auto_apply'] = policy(service.store)
+                        status['auto_apply']['confirmation_url'] = f'http://127.0.0.1:{CONFIRM_PORT}/policy/embed?project={project_id(root)}'
                         status['project'] = {'id': project_id(root), 'name': root.name, 'backend': service.default_backend}
                         status['tasks'] = [dict(task, revision=operator.control(task['id'])['revision']) for task in status['tasks']]
                         return self.json(200, status)
@@ -194,7 +197,7 @@ class WebApplication:
             return self.static(parsed.path)
         except OperatorError as error:
             if confirmation:
-                embedded = path.split('?', 1)[0] == '/confirm/embed'
+                embedded = path.split('?', 1)[0] in {'/confirm/embed', '/policy/embed'}
                 recovery = ('<p>Обновите карточку задачи и откройте форму ещё раз.</p>' if embedded else
                     f'<a href="http://127.0.0.1:{PORT}/">Вернуться в панель и обновить задачу</a>')
                 _, content_type, data = self.page('Действие не выполнено', '<p>' + html.escape(str(error)) +
@@ -238,6 +241,9 @@ class WebApplication:
         return 200, mimetypes.guess_type(relative)[0] or 'application/octet-stream', data
 
     def confirm(self, method, parsed, headers, body):
+        if parsed.path == '/policy/embed':
+            from .policy_form import dispatch
+            return dispatch(self, method, parsed, headers, body)
         if parsed.path == '/projects':
             return self.connect_project(method, headers, body)
         embedded = parsed.path == '/confirm/embed'
@@ -421,7 +427,7 @@ def servers(application):
             script_hashes = []
             if content_type.startswith('text/html'):
                 script_hashes = ["'sha256-" + base64.b64encode(hashlib.sha256(item).digest()).decode() + "'" for item in re.findall(rb'<script[^>]*>(.*?)</script>', data, re.S) if item]
-            embedded = self.server.server_port == CONFIRM_PORT and urlsplit(self.path).path == '/confirm/embed'
+            embedded = self.server.server_port == CONFIRM_PORT and urlsplit(self.path).path in {'/confirm/embed', '/policy/embed'}
             ancestors = f'http://127.0.0.1:{PORT}' if embedded else "'none'"
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' " + ' '.join(script_hashes) +
                 f"; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors {ancestors}; form-action 'self'; connect-src 'self'; frame-src http://127.0.0.1:{CONFIRM_PORT}")

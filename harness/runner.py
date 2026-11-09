@@ -327,6 +327,8 @@ class Runner:
                 task['data'].pop('retry_at', None)
                 task['data'].pop('reason', None)
                 task["state"] = "running"
+                from .auto_apply import bind_policy
+                bind_policy(self.store, task)
                 self.store.save(task, "started", {"stage": task["stage"], "backend": selected_backend}, expected=previous_state, expected_updated=task["updated"])
                 self.prepare(task)
                 previous_attempts = dict(task['data']['attempts'])
@@ -342,6 +344,15 @@ class Runner:
                     self.step(task)
                     if task["state"] != "running":
                         break
+                if task['state'] == 'review' and task['stage'] == 'done':
+                    from .auto_apply import maybe_apply
+                    try:
+                        maybe_apply(self.store, ident)
+                    except (OSError, ValueError, RuntimeError) as error:
+                        current = self.store.get(ident)
+                        current['data']['auto_apply_error'] = str(error)
+                        self.store.save(current, 'automatic_application_blocked', {'reason': str(error)},
+                                        expected=current['state'], expected_updated=current['updated'])
             except (Interrupted, StateChanged):
                 current = self.store.get(ident)
                 if current["state"] == "running":
