@@ -327,7 +327,7 @@ class Runner:
                 task['data'].pop('retry_at', None)
                 task['data'].pop('reason', None)
                 task["state"] = "running"
-                self.store.save(task, "started", {"stage": task["stage"], "backend": selected_backend}, expected=previous_state)
+                self.store.save(task, "started", {"stage": task["stage"], "backend": selected_backend}, expected=previous_state, expected_updated=task["updated"])
                 self.prepare(task)
                 previous_attempts = dict(task['data']['attempts'])
                 while task["stage"] != "done":
@@ -349,7 +349,7 @@ class Runner:
                     self.persist(current, "interrupted")
             except KeyboardInterrupt:
                 task["state"] = "paused"
-                self.store.save(task, "paused", {"reason": "interrupt"})
+                self.store.save(task, "paused", {"reason": "interrupt"}, expected="running")
                 raise
             except QuotaPause as error:
                 task['data']['attempts'] = previous_attempts
@@ -373,11 +373,13 @@ class Runner:
                 if self.store.get(ident)['state'] == 'running':
                     self.persist(task, "rate_limited", {"retry_at": task["data"]["retry_at"]})
             except Exception as error:
-                if self.store.get(ident)["state"] == "paused":
+                current = self.store.get(ident)
+                if current["state"] in {"paused", "trashed"}:
                     return
                 task["state"] = "blocked"
                 task["data"]["reason"] = str(error)
-                self.store.save(task, "blocked", {"reason": str(error)})
+                self.store.save(task, "blocked", {"reason": str(error)},
+                                expected=current["state"], expected_updated=current["updated"])
                 raise
 
     def prepare(self, task):

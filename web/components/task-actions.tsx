@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { TrustedDecisionWidget } from './trusted-decision-widget'
 import { TaskDetailsDialog } from './task-details-dialog'
 import { Dialog } from 'radix-ui'
+import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogCancel } from './ui/alert-dialog'
 import { ApiError, withinLimit } from '@/lib/http-transport'
 import { readPending, writePending, pendingSlot, type PendingCommand } from "@/lib/transport"
 import { label } from '@/lib/task-presentation'
@@ -44,6 +45,7 @@ export function TaskActions({
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const locked = useRef(false)
   const pending = useRef<PendingCommand | undefined>(restored)
 
@@ -67,7 +69,7 @@ export function TaskActions({
     }
     const command = pending.current
     if (!command) return
-    if (!['start', 'pause', 'resume', 'answer', 'switch_backend'].includes(command.action) || !['start', 'pause', 'resume', 'answer', 'switch_backend'].includes(String(command.body.action))) {
+    if (!['start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore'].includes(command.action) || !['start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore'].includes(String(command.body.action))) {
       setMessage('Решение доступно только в доверенной форме контроллера.')
       return
     }
@@ -101,6 +103,7 @@ export function TaskActions({
         if (result.status === 'succeeded') {
           save(undefined)
           setMessage('Команда выполнена контроллером')
+          setDeleteOpen(false)
           if (command.action === 'answer' && answer === command.body.text) {
             setAnswer('')
             setDialogOpen(false)
@@ -136,6 +139,23 @@ export function TaskActions({
             {label(a)}
           </Button>
         ))}
+
+        {allowed.includes('delete') && (
+          <>
+            <Button variant="outline" disabled={busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => setDeleteOpen(true)}>Удалить задачу</Button>
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <AlertDialogContent>
+                <AlertDialogTitle>Удалить задачу TASK-{String(control.task.id).padStart(3, '0')}?</AlertDialogTitle>
+                <AlertDialogDescription>Задача будет перемещена во вкладку «Удалённые». История и файлы сохранятся.</AlertDialogDescription>
+                {message && <p role="alert">{message}</p>}
+                <AlertDialogCancel disabled={busy}>Отмена</AlertDialogCancel>
+                <Button disabled={busy || Boolean(pending.current)} onClick={() => void run('delete')}>Переместить в удалённые</Button>
+              </AlertDialogContent>
+            </AlertDialog>
+          </>
+        )}
+        {control.task.state === 'running' && <Button variant="outline" disabled title="Работающую задачу удалить нельзя">Удалить задачу</Button>}
+        {allowed.includes('restore') && <Button disabled={busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => void run('restore')}>Восстановить задачу</Button>}
 
         {allowed.includes('switch_backend') && (
           <Button

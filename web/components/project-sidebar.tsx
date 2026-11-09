@@ -120,7 +120,7 @@ export function ProjectSidebar({
               tw-web
             </h1>
             <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-              Агентский harness v0.9.4
+              Агентский harness
             </span>
           </div>
         </div>

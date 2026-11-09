@@ -1,6 +1,8 @@
 # tw-web
 
-Build a local control panel for the autonomous Codex runner in `../harness-kit`.
+Build the local control panel in `web/` for the autonomous runner in the parent
+Harness Kit repository. The active controller is `../harness/`; the supported
+entry point is `../bin/tw-web`.
 The draft product specification is `docs/specs/2026-11-02-tw-web.md`.
 The iteration plan is `docs/plans/2026-11-02-tw-web.md`.
 The active bootstrap ledger is `docs/plans/2026-11-02-bootstrap.md`.
@@ -16,8 +18,9 @@ Run `python3 -m unittest discover -s tests -v` for this project.
   exceptions. They do not authorize arbitrary reads of `.git` or other secrets.
 - Keep runtime enforcement in the external controller. This file gives model
   instructions; it does not activate a sandbox, worker, hooks or plugin.
-- Do not change the sibling harness-kit as part of a tw-web task. Record
-  required engine changes as separate tasks and apply them independently.
+- A Tw task scoped to web may change only web/**. Record required engine
+  changes as separate tasks. A direct user task covering the whole monorepo
+  may update the controller and UI together.
 - Reuse core task operations in the controller; do not implement parallel
   state transitions or write its SQLite tables directly from the web app.
 - Keep worker lifetime independent of browser tabs and development reloads.

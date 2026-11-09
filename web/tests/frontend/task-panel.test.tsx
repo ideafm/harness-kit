@@ -286,3 +286,24 @@ it('поддерживает явный выбор бэкенда и отобр�
  await vi.waitFor(()=>expect(onCreated).toHaveBeenCalledWith(45))
  expect(post).toHaveBeenCalledWith('tasks',{request:'Задача на кодексе',approval_mode:'approve-plan',backend:'codex'},expect.any(String),'csrf')
 })
+
+it('отделяет корзину от основного списка и фильтра внимания',async()=>{
+ const tasks=[{id:1,state:'paused',stage:'implement',updated:1,request:'Активная задача',artifacts:[]},{id:2,state:'trashed',stage:'plan',updated:1,request:'Задача из корзины',question:'Старый вопрос',artifacts:[]}]
+ window.history.replaceState(null,'','/?project=main&task=1')
+ const get=vi.fn().mockImplementation(async(path:string)=>{
+  if(path==='projects')return {items:[{id:'main',name:'Проект'}],default_project_id:'main',connect_url:''}
+  if(path==='session')return {csrf_token:'csrf'}
+  if(path.endsWith('/status'))return {project:'main',tasks,worker:{running:false}}
+  if(path.endsWith('/capabilities'))return {project_id:'main',actions:[],events:false,apply:false}
+  return {task:tasks[0],revision:'r1',allowed_actions:[],plan:null,result:null,confirmation_urls:{}}
+ })
+ render(<TaskPanel transport={{get,post:vi.fn()} as Transport}/>)
+ await screen.findByRole('button',{name:'#1 Активная задача'})
+ expect(screen.queryByRole('button',{name:'#2 Задача из корзины'})).toBeNull()
+ fireEvent.click(screen.getByRole('button',{name:/Удалённые/}))
+ expect(screen.getByRole('button',{name:'#2 Задача из корзины'})).toBeTruthy()
+ expect(screen.queryByRole('button',{name:'#1 Активная задача'})).toBeNull()
+ fireEvent.click(screen.getByRole('button',{name:/Нужно вам/}))
+ expect(screen.getByRole('button',{name:'#1 Активная задача'})).toBeTruthy()
+ expect(screen.queryByRole('button',{name:'#2 Задача из корзины'})).toBeNull()
+})

@@ -135,6 +135,72 @@ class OperatorTests(unittest.TestCase):
                 self.operator.perform(None, {'request': 'bad task', 'approval_mode': 'auto', 'backend': 'unknown'}, 'key-bad-1')
             self.assertEqual(err.exception.status, 400)
 
+    def test_switch_backend_overrides_all_stage_routes(self):
+        from harness.runner import Runner
+        task = self.service.store.get(1)
+        task['data']['stage_backends'] = {'plan': 'gemini', 'implement': 'codex'}
+        self.service.store.save(task, 'fixture_routes')
+        self.assertEqual(self.service.show(1)['backend'], 'gemini')
+        self.service.store.pause(1)
+        control = self.operator.control(1)
+        self.operator.perform(1, {'action': 'switch_backend', 'backend': 'gemini'}, 'switch-routes-key', control['revision'])
+        runner = Runner(self.service.store)
+        task = self.service.store.get(1)
+        for stage in ('plan', 'implement', 'check', 'review'):
+            self.assertEqual(runner.task_backend(task, stage), 'gemini')
+
+    def test_delete_restore_preserves_data_and_excludes_queue_without_start(self):
+        before = self.service.store.get(1)
+        control = self.operator.control(1)
+        payload = {'action': 'delete'}
+        with patch.object(self.service, 'start') as start:
+            result = self.operator.perform(1, payload, 'delete-task-key', control['revision'])
+            self.assertEqual(result['status'], 'succeeded')
+            self.assertEqual(self.operator.perform(1, payload, 'delete-task-key', control['revision']), result)
+            self.assertEqual(self.service.store.get(1)['state'], 'trashed')
+            self.assertEqual(self.service.store.runnable(), [])
+            deleted = self.operator.control(1)
+            self.assertEqual(deleted['allowed_actions'], ['restore'])
+            with self.assertRaises(OperatorError):
+                self.operator.perform(1, {'action': 'resume'}, 'stale-resume-key', control['revision'])
+            self.operator.perform(1, {'action': 'restore'}, 'restore-task-key', deleted['revision'])
+            start.assert_not_called()
+        restored = self.service.store.get(1)
+        self.assertEqual(restored['state'], 'paused')
+        self.assertEqual(restored['stage'], before['stage'])
+        self.assertEqual(restored['data'], before['data'])
+        kinds = [event['kind'] for event in self.service.store.events(1)]
+        self.assertEqual(kinds.count('task_deleted'), 1)
+        self.assertEqual(kinds.count('task_restored'), 1)
+
+    def test_restore_retains_waiting_approval_and_completed_states(self):
+        for state in ('waiting', 'awaiting_approval', 'review', 'accepted', 'rejected', 'backlog'):
+            task = self.service.store.get(1)
+            task['state'] = state
+            self.service.store.save(task, 'fixture_state')
+            self.service.store.delete(1)
+            self.service.store.restore(1)
+            self.assertEqual(self.service.store.get(1)['state'], state)
+
+    def test_running_task_cannot_be_deleted(self):
+        task = self.service.store.get(1)
+        task['state'] = 'running'
+        self.service.store.save(task, 'fixture_running')
+        self.assertNotIn('delete', self.operator.control(1)['allowed_actions'])
+        with self.assertRaises(ValueError):
+            self.service.store.delete(1)
+        self.assertEqual(self.service.store.get(1)['state'], 'running')
+
+    def test_preflight_error_cannot_resurrect_deleted_task(self):
+        from harness.runner import Runner
+        backend = fixtures.FakeCodex()
+        def fail():
+            self.service.store.delete(1)
+            raise RuntimeError('late preflight error')
+        backend.preflight = fail
+        Runner(self.service.store, backend=backend).run(1)
+        self.assertEqual(self.service.store.get(1)['state'], 'trashed')
+
     def test_switch_backend_updates_task_and_resets_rate_limit(self):
         self.service.store.pause(1)
         control = self.operator.control(1)
@@ -203,6 +269,31 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'accept_result', body)
         self.assertIn(b'location.reload()', body)
 
+    def test_delete_http_requires_csrf_revision_and_is_idempotent(self):
+        service = TaskService(self.root)
+        try:
+            control = Operator(service).control(1)
+        finally:
+            service.close()
+        path = '/api/v1/tasks/1/actions'
+        payload = json.dumps({'action': 'delete'}).encode()
+        headers = dict(self.headers, Origin=f'http://127.0.0.1:{PORT}',
+                       **{'Content-Type': 'application/json', 'Idempotency-Key': 'http-delete-key',
+                          'If-Match': control['revision']})
+        self.assertEqual(self.app.dispatch('POST', path, headers, payload)[0], 403)
+        headers['X-CSRF-Token'] = self.app.csrf
+        headers['If-Match'] = 'stale'
+        self.assertEqual(self.app.dispatch('POST', path, headers, payload)[0], 409)
+        headers['If-Match'] = control['revision']
+        first = self.app.dispatch('POST', path, headers, payload)
+        self.assertIn(first[0], (200, 202))
+        operation_id = json.loads(first[2])['data']['operation_id']
+        operation = self.app.dispatch('GET', '/api/v1/operations/' + operation_id, self.headers)
+        self.assertEqual(json.loads(operation[2])['data']['status'], 'succeeded')
+        second = self.app.dispatch('POST', path, headers, payload)
+        self.assertEqual(json.loads(first[2])['data'], json.loads(second[2])['data'])
+        self.assertEqual(self.fixture.store.get(1)['state'], 'trashed')
+
     def test_foreign_origin_and_missing_csrf_are_denied(self):
         self.assertEqual(self.app.dispatch('GET', '/', {'Host': 'evil.example'})[0], 403)
         headers = dict(self.headers, **{'Origin': 'https://evil.example'})
@@ -212,7 +303,7 @@ class WebTests(unittest.TestCase):
     def test_control_returns_authoritative_actions_and_events(self):
         status, _, body = self.app.dispatch('GET', '/api/v1/tasks/1/control', self.headers)
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)['data']['allowed_actions'], ['start', 'pause'])
+        self.assertEqual(json.loads(body)['data']['allowed_actions'], ['start', 'pause', 'delete'])
         status, _, body = self.app.dispatch('GET', '/api/v1/tasks/1/events', self.headers)
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)['data']['items'])

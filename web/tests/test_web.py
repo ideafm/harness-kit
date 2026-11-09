@@ -148,6 +148,7 @@ class LifecycleTests(unittest.TestCase):
             command = run.call_args.args[0]
             self.assertEqual(command[-3:], ['request-changes', 'TASK-001', 'Исправь'])
             self.assertIn('--project', command)
+            self.assertEqual(Path(command[2]).resolve(), Path(__file__).resolve().parents[2] / 'bin/tw')
             self.assertFalse(run.call_args.kwargs['shell'])
 
     def test_operator_command_rejects_unknown_action(self):

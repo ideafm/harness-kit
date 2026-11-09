@@ -54,6 +54,9 @@ class TaskService:
                 result[key] = data[key]
         if 'backend' not in result:
             result['backend'] = self.default_backend
+        stage_backends = data.get('stage_backends')
+        if isinstance(stage_backends, dict) and stage_backends.get(task['stage']) in {'codex', 'gemini'}:
+            result['backend'] = stage_backends[task['stage']]
         if task['state'] != 'rate_limited':
             result.pop('retry_at', None)
         if task['state'] in {'running', 'queued', 'review', 'accepted'}:

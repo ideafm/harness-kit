@@ -74,10 +74,16 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
     ['needs_permission', 'needs_input', 'awaiting_approval'].includes(t.state) ||
     (t.state === 'review' && t.stage === 'done')
 
-  const attentionCount = tasks.filter(isAttentionRequired).length
+  const activeTasks = tasks.filter(t => t.state !== 'trashed')
+  const deletedCount = tasks.length - activeTasks.length
+  const attentionCount = activeTasks.filter(isAttentionRequired).length
 
   const filtered = tasks.filter(t => {
-    const matchesFilter = filter === 'all'
+    const matchesFilter = filter === 'deleted'
+      ? t.state === 'trashed'
+      : t.state === 'trashed'
+      ? false
+      : filter === 'all'
       ? true
       : filter === 'backlog'
       ? t.state === 'backlog'
@@ -100,7 +106,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
       {/* 1. Left Aside Sidebar with Projects & tw logo */}
       <ProjectSidebar
         project={projectName}
-        count={tasks.length}
+        count={activeTasks.length}
         running={data.status?.worker.running ?? false}
         projects={data.projects}
         selected={data.projectId}
@@ -234,7 +240,8 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
                   {[
                     ['all', 'Все'],
                     ['attention', 'Нужно вам'],
-                    ['backlog', 'Бэклог']
+                    ['backlog', 'Бэклог'],
+                    ['deleted', 'Удалённые']
                   ].map(([value, testTitle]) => (
                     <button
                       key={value}
@@ -247,7 +254,8 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
                       }`}
                     >
                       <span>{testTitle}</span>
-                      {value === 'all' && <span className="opacity-70 text-[11px]">({tasks.length})</span>}
+                      {value === 'all' && <span className="opacity-70 text-[11px]">({activeTasks.length})</span>}
+                      {value === 'deleted' && <span>({deletedCount})</span>}
                       {value === 'attention' && attentionCount > 0 && (
                         <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-bold">
                           {attentionCount}
@@ -366,7 +374,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
-        tasks={tasks}
+        tasks={activeTasks}
         projects={data.projects}
         currentProjectId={data.projectId}
         currentProjectName={projectName}
@@ -439,6 +447,11 @@ export function TaskTable({
           badgeLabel = 'В работе'
           badgeClass = 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40'
           BadgeIcon = Clock
+        }
+
+        if (t.state === 'trashed') {
+          badgeLabel = 'Удалена'
+          BadgeIcon = Trash2
         }
 
         if (density === 'compact') {
@@ -531,13 +544,6 @@ export function TaskTable({
                   <span className="truncate max-w-[80px]">{badgeLabel}</span>
                 </span>
 
-                <button
-                  disabled
-                  className="opacity-0 group-hover:opacity-40 p-1 rounded text-zinc-400 pointer-events-none cursor-not-allowed transition-all"
-                  title="Удаление задачи не поддерживается API"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
               </div>
             </div>
           )
@@ -595,13 +601,6 @@ export function TaskTable({
                   <BadgeIcon className="w-2.5 h-2.5 shrink-0" />
                   <span>{badgeLabel}</span>
                 </span>
-                <button
-                  disabled
-                  className="opacity-0 group-hover:opacity-40 p-1 rounded text-zinc-400 pointer-events-none cursor-not-allowed transition-all"
-                  title="Удаление задачи не поддерживается API"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
               </div>
             </div>
 

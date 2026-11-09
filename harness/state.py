@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
-STATES = {"backlog", "queued", "running", "waiting", "awaiting_approval", "rate_limited", "paused", "blocked", "review", "accepted", "rejected"}
+STATES = {"trashed", "backlog", "queued", "running", "waiting", "awaiting_approval", "rate_limited", "paused", "blocked", "review", "accepted", "rejected"}
 STAGE_KEYS = ("plan", "implement", "check", "review")
 
 
@@ -188,6 +188,30 @@ class Store:
             if changed.rowcount != 1:
                 raise ValueError("Эту задачу сейчас нельзя приостановить")
             self.event(ident, "pause_requested", {})
+
+    def delete(self, ident):
+        self.ensure_current()
+        with self.transaction():
+            task = self.get(ident)
+            previous = task['state']
+            if previous in {'running', 'trashed'}:
+                raise ValueError('Работающую или уже удалённую задачу удалить нельзя')
+            task['data']['deleted_from_state'] = previous
+            task['state'] = 'trashed'
+            self.save(task, 'task_deleted', {'previous_state': previous},
+                      expected=previous, expected_updated=task['updated'])
+
+    def restore(self, ident):
+        self.ensure_current()
+        with self.transaction():
+            task = self.get(ident)
+            if task['state'] != 'trashed':
+                raise ValueError('Восстановить можно только удалённую задачу')
+            previous = task['data'].pop('deleted_from_state', 'paused')
+            task['state'] = previous if previous in STATES - {'running', 'queued', 'rate_limited', 'trashed'} else 'paused'
+            task['data'].pop('retry_at', None)
+            self.save(task, 'task_restored', {'restored_state': task['state']},
+                      expected='trashed', expected_updated=task['updated'])
 
     def events(self, ident):
         self.ensure_current()

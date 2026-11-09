@@ -12,7 +12,7 @@ from .state import StateChanged
 
 
 HIGH_ACTIONS = {'approve_plan', 'revise_plan', 'accept_result', 'request_changes', 'reject_result'}
-ACTIONS = {'start', 'pause', 'resume', 'answer', 'switch_backend'} | HIGH_ACTIONS
+ACTIONS = {'start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore'} | HIGH_ACTIONS
 
 
 class OperatorError(ValueError):
@@ -54,6 +54,10 @@ class Operator:
                 actions.append('revise_plan')
         if state == 'review' and task['stage'] == 'done':
             actions.extend(('accept_result', 'request_changes', 'reject_result'))
+        if state == 'trashed':
+            actions = ['restore']
+        elif state != 'running':
+            actions.append('delete')
         plan = {'version': data['plan_version'], 'digest': data['plan_version']} if data.get('plan_version') else None
         result = None
         if data.get('check_receipt') and data.get('changes'):
@@ -125,7 +129,7 @@ class Operator:
     def validate(self, action, payload):
         keys = {'submit': {'request', 'approval_mode'}, 'start': {'action'}, 'pause': {'action'},
                 'resume': {'action'}, 'answer': {'action', 'question_id', 'text'},
-                'switch_backend': {'action', 'backend'},
+                'switch_backend': {'action', 'backend'}, 'delete': {'action'}, 'restore': {'action'},
                 'approve_plan': {'action', 'plan_version', 'plan_digest'},
                 'revise_plan': {'action', 'plan_version', 'plan_digest', 'feedback'},
                 'accept_result': {'action', 'result_version', 'result_digest'},
@@ -167,17 +171,22 @@ class Operator:
             self.service.operate(action, ident, payload.get('text'))
         elif action == 'start':
             self.service.start(ident)
+        elif action in {'delete', 'restore'}:
+            getattr(self.store, action)(ident)
         elif action == 'switch_backend':
             target_backend = payload['backend']
             task = self.store.get(ident)
             previous_backend = task['data'].get('backend')
             previous_state = task['state']
+            previous_stages = task['data'].get('stage_backends', {})
             task['data']['backend'] = target_backend
+            from .state import STAGE_KEYS
+            task['data']['stage_backends'] = {stage: target_backend for stage in STAGE_KEYS}
             if task['state'] == 'rate_limited':
                 task['state'] = 'queued'
                 task['data'].pop('retry_at', None)
                 task['data'].pop('reason', None)
-            self.store.save(task, 'backend_switched', {'from': previous_backend, 'to': target_backend},
+            self.store.save(task, 'backend_switched', {'from': previous_backend, 'to': target_backend, 'previous_stage_backends': previous_stages},
                             expected=previous_state, expected_updated=task['updated'])
             if previous_state == 'rate_limited':
                 try:
