@@ -19,6 +19,10 @@ def prepare_worktree(store, task):
         record = json.loads(record_path.read_text())
         if record != {'branch': branch, 'base': task['data']['base'], 'path': str(destination)}:
             raise ValueError('Worktree не соответствует задаче')
+        if not destination.exists():
+            git(store.root, 'worktree', 'add', '--no-checkout', str(destination), branch)
+            git(destination, 'read-tree', task['data']['base'])
+            export_snapshot(store.root, destination, task['data']['base'])
         if git(destination, 'symbolic-ref', '--short', 'HEAD').decode().strip() != branch:
             raise ValueError('Ветка worktree изменена')
         return destination
@@ -29,6 +33,24 @@ def prepare_worktree(store, task):
     export_snapshot(store.root, destination, task['data']['base'])
     atomic_json(record_path, {'branch': branch, 'base': task['data']['base'], 'path': str(destination)})
     return destination
+
+
+def remove_worktree(store, ident):
+    folder = store.folder(ident)
+    destination = folder / 'git-worktree'
+    if destination.is_symlink():
+        destination.unlink()
+        return
+    if destination.exists():
+        try:
+            git(store.root, 'worktree', 'remove', '--force', str(destination))
+        except (subprocess.CalledProcessError, OSError):
+            import shutil
+            shutil.rmtree(destination, ignore_errors=True)
+            try:
+                git(store.root, 'worktree', 'prune')
+            except (subprocess.CalledProcessError, OSError):
+                pass
 
 
 def commit_accepted(store, ident):

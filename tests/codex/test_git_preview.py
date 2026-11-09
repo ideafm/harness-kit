@@ -58,6 +58,26 @@ class GitResultTests(unittest.TestCase):
         self.fixture.cli('accept', '1', '--confirm', 'TASK-001')
         self.assertEqual(commit_accepted(self.store, 1)['worktree'], str(worktree))
 
+    def test_prepare_worktree_recovers_if_directory_missing(self):
+        task = self.store.get(1)
+        worktree = prepare_worktree(self.store, task)
+        self.assertTrue(worktree.exists())
+        from harness.git_results import remove_worktree
+        remove_worktree(self.store, 1)
+        self.assertFalse(worktree.exists())
+        recovered = prepare_worktree(self.store, task)
+        self.assertTrue(recovered.exists())
+        self.assertEqual(git(recovered, 'symbolic-ref', '--short', 'HEAD').decode().strip(), 'tw/TASK-001')
+
+    def test_reject_removes_prepared_worktree(self):
+        task = self.store.get(1)
+        worktree = prepare_worktree(self.store, task)
+        self.assertTrue(worktree.exists())
+        self.fixture.cli('reject', '1', '--reason', 'not needed', '--confirm', 'TASK-001')
+        self.assertFalse(worktree.exists())
+        worktrees = git(self.store.root, 'worktree', 'list').decode().strip().splitlines()
+        self.assertEqual(len(worktrees), 1)
+
 
 class PreviewTests(unittest.TestCase):
     def setUp(self):

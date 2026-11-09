@@ -21,5 +21,7 @@ def decide(store, ident, action, text, confirmation=None):
     else:
         data["reason"] = text
         task["state"] = "rejected"
+        from .git_results import remove_worktree
+        remove_worktree(store, ident)
     store.save(task, "changes_requested" if action == "request-changes" else "rejected", detail,
                expected="review", expected_updated=task["updated"])

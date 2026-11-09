@@ -28,6 +28,9 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(git(self.store.root, 'rev-parse', 'HEAD').decode().strip(), record['commit'])
         self.assertEqual(apply_accepted(self.store, 1), record)
         self.assertEqual(self.store.get(1)['data']['integration'], record)
+        self.assertFalse((self.store.folder(1) / 'git-worktree').exists())
+        worktrees = git(self.store.root, 'worktree', 'list').decode().strip().splitlines()
+        self.assertEqual(len(worktrees), 1)
 
     def test_dirty_main_preserves_user_changes_and_head(self):
         before = git(self.store.root, 'rev-parse', 'HEAD')

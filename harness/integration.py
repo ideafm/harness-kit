@@ -2,7 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from .git_results import commit_accepted
+from .git_results import commit_accepted, remove_worktree
 from .runner import lock
 from .security import git, protected
 from .state import atomic_json
@@ -75,6 +75,7 @@ def apply_accepted(store, ident):
         pending = store.folder(ident) / 'integration-pending.json'
         if pending.exists():
             pending.unlink()
+        remove_worktree(store, ident)
         if (store.home / 'web-ui.json').is_file() and task['data'].get('frontend_toolchain') == 'next-ui':
             deployed = json.loads((store.home / 'web-ui.json').read_text())
             if deployed.get('task') != ident and type(deployed.get('task')) is int:
