@@ -119,6 +119,7 @@ export function ProjectSidebar({
             <h1 className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 leading-none">
               tw-web
             </h1>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Тест очереди B</p>
             <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
               Агентский harness
             </span>
