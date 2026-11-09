@@ -20,7 +20,9 @@ import {
   CheckCircle2, 
   Check, 
   Clock, 
-  Trash2 
+  Trash2,
+  Pause,
+  AlertCircle
 } from 'lucide-react'
 
 export function TaskPanel({ transport = httpTransport }: { transport?: Transport }) {
@@ -66,18 +68,20 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
     }
   }, [mobileCard, task?.id])
 
-  const attentionCount = tasks.filter(t => 
-    Boolean(t.question) || 
-    ['needs_permission', 'needs_input', 'awaiting_approval'].includes(t.state) || 
+  const isAttentionRequired = (t: Task) =>
+    t.state === 'paused' ||
+    Boolean(t.question) ||
+    ['needs_permission', 'needs_input', 'awaiting_approval'].includes(t.state) ||
     (t.state === 'review' && t.stage === 'done')
-  ).length
+
+  const attentionCount = tasks.filter(isAttentionRequired).length
 
   const filtered = tasks.filter(t => {
     const matchesFilter = filter === 'all'
       ? true
       : filter === 'backlog'
       ? t.state === 'backlog'
-      : Boolean(t.question) || ['needs_permission', 'needs_input', 'awaiting_approval'].includes(t.state) || (t.state === 'review' && t.stage === 'done')
+      : isAttentionRequired(t)
 
     const matchesSearch = (`#${t.id} ${t.request.split('\n')[0]}`)
       .toLocaleLowerCase('ru')
@@ -396,27 +400,46 @@ export function TaskTable({
         const isAccepted = t.state === 'accepted'
         const isReviewDone = t.state === 'review' && t.stage === 'done'
         const isRunning = t.state === 'running'
+        const isPaused = t.state === 'paused'
+        const hasQuestion = Boolean(t.question) || t.state === 'needs_input'
+        const needsPermission = t.state === 'needs_permission'
+        const awaitingApproval = t.state === 'awaiting_approval'
+        const isActionRequired = isPaused || hasQuestion || needsPermission || awaitingApproval || isReviewDone
 
-        // Status badge label and styling matching design
         let badgeLabel = 'План'
         let badgeClass = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700'
         let BadgeIcon = Clock
 
-        if (isAccepted) {
-          badgeLabel = 'Принято'
-          badgeClass = 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-900/40'
-          BadgeIcon = CheckCircle2
-        } else if (isReviewDone || t.state === 'awaiting_approval') {
+        if (isPaused) {
+          badgeLabel = 'Пауза'
+          badgeClass = 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700/80'
+          BadgeIcon = Pause
+        } else if (hasQuestion) {
+          badgeLabel = 'Нужен ответ'
+          badgeClass = 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700/80'
+          BadgeIcon = AlertCircle
+        } else if (needsPermission) {
+          badgeLabel = 'Разрешение'
+          badgeClass = 'bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-200 border border-orange-300 dark:border-orange-700/80'
+          BadgeIcon = AlertCircle
+        } else if (awaitingApproval) {
+          badgeLabel = 'Утверждение'
+          badgeClass = 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700/80'
+          BadgeIcon = Clock
+        } else if (isReviewDone) {
           badgeLabel = 'Приёмка'
           badgeClass = 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/40'
           BadgeIcon = Check
+        } else if (isAccepted) {
+          badgeLabel = 'Принято'
+          badgeClass = 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-900/40'
+          BadgeIcon = CheckCircle2
         } else if (isRunning) {
-          badgeLabel = 'Разработка'
+          badgeLabel = 'В работе'
           badgeClass = 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40'
           BadgeIcon = Clock
         }
 
-        /* ================= 1. COMPACT NARROW STRIP (~38px) ================= */
         if (density === 'compact') {
           return (
             <div
@@ -424,12 +447,13 @@ export function TaskTable({
               onClick={() => onSelect(t.id)}
               className={`task-row px-2.5 py-2 rounded-lg border text-left cursor-pointer transition-all duration-150 group flex items-center justify-between gap-2.5 ${
                 isSelected
-                  ? 'selected bg-blue-50/80 dark:bg-blue-950/40 border-blue-500 dark:border-blue-500 shadow-2xs ring-1 ring-blue-500/30'
+                  ? `selected bg-blue-50/80 dark:bg-blue-950/40 border-blue-500 dark:border-blue-500 shadow-2xs ring-1 ring-blue-500/30 ${isActionRequired ? 'border-l-4 border-l-amber-500 dark:border-l-amber-400' : ''}`
+                  : isActionRequired
+                  ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-700/80 hover:border-amber-400 dark:hover:border-amber-600 border-l-4 border-l-amber-500 dark:border-l-amber-400'
                   : 'bg-white dark:bg-zinc-900/70 border-zinc-200/80 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-900'
               }`}
               title={`#${t.id}: ${title} (${badgeLabel})`}
             >
-              {/* Left: Checkbox, Badge ID, Truncated Title */}
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <input
                   type="checkbox"
@@ -440,7 +464,13 @@ export function TaskTable({
                   tabIndex={-1}
                 />
 
-                {/* Task Number in a small bordered badge */}
+                {isActionRequired && (
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+                  </span>
+                )}
+
                 <span className="font-mono text-[11px] font-bold text-zinc-600 dark:text-zinc-400 px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 shrink-0">
                   #{t.id}
                 </span>
@@ -448,14 +478,13 @@ export function TaskTable({
                 {t.backend && (
                   <span className={`text-[10px] font-mono font-medium px-1.5 py-0.5 rounded border shrink-0 ${
                     t.backend === 'gemini'
-                      ? 'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border-purple-200/60 dark:border-purple-800'
+                      ? 'bg-purple-50 dark:purple-950/40 text-purple-700 dark:text-purple-300 border-purple-200/60 dark:border-purple-800'
                       : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-800'
                   }`}>
                     {t.backend === 'gemini' ? 'Gemini' : 'Codex'}
                   </span>
                 )}
 
-                {/* Clickable Title / task-select button for accessibility & tests */}
                 <button
                   className="task-select text-left truncate flex-1 bg-transparent border-0 p-0 cursor-pointer focus:outline-none"
                   aria-label={`#${t.id} ${title}`}
@@ -472,9 +501,7 @@ export function TaskTable({
                 </button>
               </div>
 
-              {/* Right: 5 mini dots, Status Pill & Disabled Trash on hover */}
               <div className="flex items-center gap-1.5 shrink-0">
-                {/* 5 mini pipeline step dots */}
                 <div className="hidden sm:flex items-center gap-1 bg-zinc-100/80 dark:bg-zinc-800/60 px-1.5 py-0.5 rounded">
                   {STAGES_CONFIG.map((s, idx) => {
                     const isStagePassed = isAccepted || idx < currentStageIdx
@@ -485,7 +512,9 @@ export function TaskTable({
                         key={s.id}
                         className={`w-1.5 h-1.5 rounded-full transition-transform ${
                           isStageActive
-                            ? 'bg-blue-600 dark:bg-blue-400 ring-2 ring-blue-300 dark:ring-blue-900 scale-125'
+                            ? isActionRequired
+                              ? 'bg-amber-500 dark:bg-amber-400 ring-2 ring-amber-300 dark:ring-amber-900 scale-125'
+                              : 'bg-blue-600 dark:bg-blue-400 ring-2 ring-blue-300 dark:ring-blue-900 scale-125'
                             : isStagePassed
                             ? 'bg-emerald-500 dark:bg-emerald-400'
                             : 'bg-zinc-300 dark:bg-zinc-700'
@@ -496,13 +525,11 @@ export function TaskTable({
                   })}
                 </div>
 
-                {/* Status Pill */}
                 <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap ${badgeClass}`}>
                   <BadgeIcon className="w-2.5 h-2.5 shrink-0" />
                   <span className="truncate max-w-[80px]">{badgeLabel}</span>
                 </span>
 
-                {/* Delete button (disabled with opacity-40 and pointer-events-none) */}
                 <button
                   disabled
                   className="opacity-0 group-hover:opacity-40 p-1 rounded text-zinc-400 pointer-events-none cursor-not-allowed transition-all"
@@ -515,14 +542,15 @@ export function TaskTable({
           )
         }
 
-        /* ================= 2. NORMAL DETAILED VIEW (КАРТОЧКА) ================= */
         return (
           <div
             key={t.id}
             onClick={() => onSelect(t.id)}
             className={`task-row p-3 rounded-xl border text-left cursor-pointer transition-all duration-150 group relative ${
               isSelected
-                ? 'selected bg-white dark:bg-zinc-900 border-blue-500 dark:border-blue-500 shadow-sm ring-1 ring-blue-500/30'
+                ? `selected bg-white dark:bg-zinc-900 border-blue-500 dark:border-blue-500 shadow-sm ring-1 ring-blue-500/30 ${isActionRequired ? 'border-l-4 border-l-amber-500 dark:border-l-amber-400' : ''}`
+                : isActionRequired
+                ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-700/80 hover:border-amber-400 dark:hover:border-amber-600 border-l-4 border-l-amber-500 dark:border-l-amber-400 shadow-2xs'
                 : 'bg-white/80 dark:bg-zinc-900/60 border-zinc-200/90 dark:border-zinc-800/80 hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-2xs'
             }`}
           >
@@ -536,6 +564,12 @@ export function TaskTable({
                   title="Массовые операции с задачами не поддерживаются бэкендом"
                   tabIndex={-1}
                 />
+                {isActionRequired && (
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+                  </span>
+                )}
                 <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 font-bold text-zinc-600 dark:text-zinc-300">
                   #{t.id}
                 </span>
@@ -570,7 +604,6 @@ export function TaskTable({
               </div>
             </div>
 
-            {/* Title button */}
             <button
               className="task-select text-left w-full bg-transparent border-0 p-0 cursor-pointer focus:outline-none mb-2"
               aria-label={`#${t.id} ${title}`}
@@ -586,7 +619,6 @@ export function TaskTable({
               </h3>
             </button>
 
-            {/* Bottom row: 5 stage icon boxes and stage label */}
             <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800/80">
               <div className="flex items-center gap-1">
                 {STAGES_CONFIG.map((s, idx) => {
@@ -599,7 +631,9 @@ export function TaskTable({
                       key={s.id}
                       className={`w-5 h-5 rounded flex items-center justify-center text-[10px] transition-colors ${
                         isStageActive
-                          ? 'bg-blue-600 text-white shadow-2xs font-bold ring-2 ring-blue-300 dark:ring-blue-900'
+                          ? isActionRequired
+                            ? 'bg-amber-500 text-white shadow-2xs font-bold ring-2 ring-amber-300 dark:ring-amber-900'
+                            : 'bg-blue-600 text-white shadow-2xs font-bold ring-2 ring-blue-300 dark:ring-blue-900'
                           : isStagePassed
                           ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
                           : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400'

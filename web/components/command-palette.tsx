@@ -280,6 +280,10 @@ export function CommandPalette({
                 {matchingTasks.map(t => {
                   const idx = runningIndex++
                   const isSelected = idx === selectedIndex
+                  const isPaused = t.state === 'paused'
+                  const isActionRequired = isPaused || Boolean(t.question) || ['needs_permission', 'needs_input', 'awaiting_approval'].includes(t.state) || (t.state === 'review' && t.stage === 'done')
+                  const isAccepted = t.state === 'accepted'
+
                   return (
                     <button
                       key={t.id}
@@ -289,14 +293,30 @@ export function CommandPalette({
                       className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors text-left cursor-pointer ${
                         isSelected 
                           ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-blue-100 font-medium ring-1 ring-blue-500/20' 
+                          : isActionRequired
+                          ? 'hover:bg-amber-50/50 dark:hover:bg-amber-950/30 text-zinc-800 dark:text-zinc-200'
                           : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-800 dark:text-zinc-200'
                       }`}
                     >
                       <div className="flex items-center gap-2 truncate mr-2">
+                        {isActionRequired && (
+                          <span className="relative flex h-1.5 w-1.5 shrink-0">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
+                          </span>
+                        )}
                         <span className="font-mono text-[11px] font-bold text-zinc-500 shrink-0">#{t.id}</span>
                         <span className="truncate">{t.request.split('\n')[0].replace(/^\s*#{1,6}\s+/, '')}</span>
                       </div>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 shrink-0">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border shrink-0 font-medium ${
+                        isPaused
+                          ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700/80'
+                          : isActionRequired
+                          ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200/60 dark:border-amber-900/40'
+                          : isAccepted
+                          ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200/60 dark:border-emerald-900/40'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border-transparent'
+                      }`}>
                         {taskStateLabel(t)}
                       </span>
                     </button>

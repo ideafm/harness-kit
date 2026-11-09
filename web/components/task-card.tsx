@@ -19,7 +19,8 @@ import {
   ChevronDown,
   ArrowRight,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Pause
 } from 'lucide-react'
 
 export function TaskCard({
@@ -71,7 +72,7 @@ export function TaskCard({
     : task.state === 'running'
     ? 'От вас сейчас ничего не требуется.'
     : task.state === 'paused'
-    ? 'Задача на паузе.'
+    ? 'Задача приостановлена.'
     : task.state === 'accepted'
     ? 'Результат принят.'
     : task.state === 'backlog'
@@ -160,6 +161,8 @@ export function TaskCard({
           <div className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md ${
             applied
               ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-900/40'
+              : task.state === 'paused'
+              ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700/80'
               : task.question || acceptance
               ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/40'
               : task.state === 'running'
@@ -168,6 +171,8 @@ export function TaskCard({
           }`}>
             {applied ? (
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+            ) : task.state === 'paused' ? (
+              <Pause className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
             ) : task.question || acceptance ? (
               <Clock className="w-3.5 h-3.5 text-amber-500" />
             ) : task.state === 'running' ? (
@@ -178,7 +183,6 @@ export function TaskCard({
             <span>{taskStateLabel(task)}</span>
           </div>
 
-          {/* Delete button (no backend data/API -> disabled with opacity-40 and cursor-not-allowed) */}
           <button
             disabled
             className="p-1.5 rounded-md border border-zinc-200 dark:border-zinc-800 text-zinc-400 opacity-40 cursor-not-allowed"
@@ -189,14 +193,12 @@ export function TaskCard({
         </div>
       </div>
 
-      {/* 2. Task Title */}
       <div>
         <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 leading-snug">
           {task.request.split('\n')[0].replace(/^\s*#{1,6}\s+/, '') || 'Без названия'}
         </h2>
       </div>
 
-      {/* 3. Pipeline Stepper matching reference */}
       <section aria-label="Пайплайн задачи">
         <PipelineStepper 
           task={task} 
@@ -205,7 +207,6 @@ export function TaskCard({
         />
       </section>
 
-      {/* Rate limited banner if active */}
       {task.state === 'rate_limited' && (
         <section className="limit-notice p-4 rounded-xl border border-amber-300 dark:border-amber-800/80 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200" aria-label="Ограничение задачи">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
@@ -218,10 +219,11 @@ export function TaskCard({
         </section>
       )}
 
-      {/* 4. Action Decision Card matching reference screenshot */}
       <div className={`task-context rounded-xl border p-5 shadow-2xs space-y-4 ${
         applied
           ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/60'
+          : task.state === 'paused'
+          ? 'bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800/80'
           : 'bg-zinc-50/80 dark:bg-zinc-900/60 border-zinc-200 dark:border-zinc-800'
       }`}>
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -233,6 +235,8 @@ export function TaskCard({
               <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
                 applied
                   ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
+                  : task.state === 'paused'
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
                   : task.question
                   ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
                   : acceptance
@@ -243,6 +247,8 @@ export function TaskCard({
               }`}>
                 {applied
                   ? 'Применение подтверждено'
+                  : task.state === 'paused'
+                  ? 'На паузе'
                   : task.question
                   ? 'Требуется ответ'
                   : acceptance
@@ -254,11 +260,15 @@ export function TaskCard({
             </div>
 
             <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              {task.question || (acceptance ? 'Результат задачи принят. Подтвердите применение в git или запросите доработку.' : guidance)}
+              {task.state === 'paused'
+                ? 'Задача приостановлена'
+                : task.question || (acceptance ? 'Результат задачи принят. Подтвердите применение в git или запросите доработку.' : guidance)}
             </div>
 
             <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-              {task.question
+              {task.state === 'paused'
+                ? 'Задача приостановлена. Нажмите «Продолжить», чтобы возобновить выполнение агентом.'
+                : task.question
                 ? 'Агент запросил уточнение для продолжения работы над задачей. Ответьте на вопрос, чтобы возобновить выполнение.'
                 : acceptance
                 ? 'Автономный агент успешно выполнил все этапы пайплайна. Все проверки типов tsc и ESLint пройдены без ошибок.'
