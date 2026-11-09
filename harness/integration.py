@@ -1,5 +1,7 @@
 import json
 import subprocess
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from .git_results import commit_accepted, remove_worktree
@@ -18,6 +20,30 @@ def ancestor(root, before, after):
         return False
 
 
+def frontend_root(store, ident):
+    from .runner import Runner
+    scope = Runner(store).task_scope_dir(store.get(ident))
+    base = store.git_toplevel() if scope else store.root
+    root = base / scope if scope else base
+    if not root.is_dir() or any(parent.is_symlink()
+            for parent in (root, *root.parents) if parent.is_relative_to(base)):
+        raise ValueError('Недопустимый каталог frontend основной версии')
+    return root
+
+
+@contextmanager
+def frontend_snapshot(store, ident):
+    from .security import export_snapshot, regular_files, read_regular
+    root = frontend_root(store, ident)
+    with tempfile.TemporaryDirectory(prefix='tw-integrated-source-') as temporary:
+        snapshot = Path(temporary).resolve()
+        export_snapshot(store.git_toplevel(), snapshot, 'HEAD')
+        source = snapshot / root.relative_to(store.git_toplevel())
+        for name, _ in regular_files(source):
+            (source / name).write_bytes(read_regular(root, name))
+        yield source
+
+
 def deployment_receipt(store, ident):
     folder = store.folder(ident)
     integrated = folder / 'integrated-build'
@@ -25,13 +51,37 @@ def deployment_receipt(store, ident):
     if integrated.is_symlink() or receipt.is_symlink():
         raise ValueError('Сборка объединённой версии заменена ссылкой')
     if not receipt.exists():
-        return folder / 'frontend-receipt.json'
+        receipt = folder / 'frontend-receipt.json'
+    if receipt.is_symlink():
+        raise ValueError('Receipt сборки заменён ссылкой')
     from .node import source_digest
     data = json.loads(receipt.read_text())
-    if data.get('source_digest') != source_digest(store.root) or not data.get('checks') or any(
+    with frontend_snapshot(store, ident) as source:
+        current_digest = source_digest(source)
+    if data.get('source_digest') != current_digest or not data.get('checks') or any(
             check.get('exit_code') != 0 for check in data['checks']):
         raise ValueError('Объединённая сборка не соответствует проверенной основной версии')
     return receipt
+
+
+def prepare_deployment(store, ident):
+    try:
+        return deployment_receipt(store, ident)
+    except (FileNotFoundError, ValueError):
+        folder = store.folder(ident) / 'integrated-build'
+        if folder.is_symlink():
+            raise ValueError('Сборка объединённой версии заменена ссылкой')
+        folder.mkdir(exist_ok=True)
+        if (folder / 'frontend-receipt.json').is_symlink():
+            raise ValueError('Receipt сборки заменён ссылкой')
+        config = json.loads((store.home / 'config.json').read_text())
+        from .node import check
+        root = frontend_root(store, ident)
+        toolchain_root = root if (root / '.harness/toolchains/next-ui/toolchain.json').is_file() else store.root
+        with frontend_snapshot(store, ident) as source:
+            if check(source, folder, config, project_root=toolchain_root):
+                raise ValueError('Проверки объединённой основной версии не прошли; прежняя панель сохранена')
+        return deployment_receipt(store, ident)
 
 
 def apply_accepted(store, ident):
@@ -82,7 +132,7 @@ def apply_accepted(store, ident):
                 newer = store.get(deployed['task'])['data'].get('integration')
                 if newer and newer['commit'] != record['commit'] and ancestor(store.root, record['commit'], newer['commit']):
                     return record
-            receipt = deployment_receipt(store, ident)
+            receipt = prepare_deployment(store, ident)
             if receipt.is_symlink():
                 raise ValueError('Receipt сборки заменён ссылкой')
             data = json.loads(receipt.read_text())

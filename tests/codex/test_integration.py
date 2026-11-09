@@ -2,7 +2,8 @@ import json
 import unittest
 
 import test_harness as fixtures
-from harness.integration import apply_accepted, deployment_receipt
+from harness.integration import apply_accepted, deployment_receipt, prepare_deployment, frontend_root, frontend_snapshot
+from unittest.mock import patch
 from harness.node import source_digest
 from harness.security import git
 from harness.state import atomic_json
@@ -108,3 +109,46 @@ class IntegrationTests(unittest.TestCase):
         (folder / 'frontend-receipt.json').symlink_to(self.store.root / 'app.py')
         with self.assertRaisesRegex(ValueError, 'ссылкой'):
             deployment_receipt(self.store, 1)
+
+    def test_original_task_receipt_cannot_publish_stale_sources(self):
+        original = self.store.folder(1) / 'frontend-receipt.json'
+        atomic_json(original, {'source_digest': 'old task sources', 'checks': [{'exit_code': 0}]})
+        with self.assertRaisesRegex(ValueError, 'основной версии'):
+            deployment_receipt(self.store, 1)
+        def build(root, folder, config, project_root=None):
+            atomic_json(folder / 'frontend-receipt.json',
+                        {'source_digest': source_digest(root), 'checks': [{'exit_code': 0}]})
+            return 0
+        with patch('harness.node.check', side_effect=build) as check:
+            receipt = prepare_deployment(self.store, 1)
+            check.assert_called_once()
+        self.assertEqual(receipt.parent.name, 'integrated-build')
+        self.assertEqual(json.loads(original.read_text())['source_digest'], 'old task sources')
+        with patch('harness.node.check') as check:
+            self.assertEqual(prepare_deployment(self.store, 1), receipt)
+            check.assert_not_called()
+
+    def test_failed_combined_checks_do_not_return_old_task_export(self):
+        atomic_json(self.store.folder(1) / 'frontend-receipt.json',
+                    {'source_digest': 'old', 'checks': [{'exit_code': 0}]})
+        with patch('harness.node.check', return_value=1):
+            with self.assertRaisesRegex(ValueError, 'прежняя панель'):
+                prepare_deployment(self.store, 1)
+
+    def test_frontend_scope_is_relative_to_git_root_for_nested_project(self):
+        from types import SimpleNamespace
+        nested = self.store.root / 'web'
+        nested.mkdir()
+        store = SimpleNamespace(root=nested, git_toplevel=lambda: self.store.root, get=lambda ident: {})
+        with patch('harness.runner.Runner') as runner:
+            runner.return_value.task_scope_dir.return_value = 'web'
+            self.assertEqual(frontend_root(store, 1), nested)
+
+    def test_main_snapshot_excludes_generated_files_and_reads_current_tracked_sources(self):
+        generated = self.store.root / 'node_modules'
+        generated.mkdir()
+        (generated / 'local.js').write_text('local dependency')
+        (self.store.root / 'app.py').write_text('current tracked edit')
+        with frontend_snapshot(self.store, 1) as source:
+            self.assertFalse((source / 'node_modules').exists())
+            self.assertEqual((source / 'app.py').read_text(), 'current tracked edit')
