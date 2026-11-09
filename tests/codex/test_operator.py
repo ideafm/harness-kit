@@ -135,6 +135,20 @@ class OperatorTests(unittest.TestCase):
                 self.operator.perform(None, {'request': 'bad task', 'approval_mode': 'auto', 'backend': 'unknown'}, 'key-bad-1')
             self.assertEqual(err.exception.status, 400)
 
+    def test_backlog_enqueue_starts_worker_once_and_preserves_queue_order(self):
+        from harness.queue_control import QueueControl
+        ident = self.service.store.add('backlog task', placement='backlog')['id']
+        control = self.operator.control(ident)
+        self.assertIn('enqueue', control['allowed_actions'])
+        payload = {'action': 'enqueue'}
+        with patch.object(self.service, 'start') as start:
+            result = self.operator.perform(ident, payload, 'enqueue-one-task', control['revision'])
+            self.assertEqual(result['status'], 'succeeded')
+            self.assertEqual(self.operator.perform(ident, payload, 'enqueue-one-task', control['revision']), result)
+            start.assert_called_once_with(ident)
+        self.assertEqual([t['id'] for t in self.service.store.runnable()], [1, ident])
+        self.assertNotIn('enqueue', self.operator.control(ident)['allowed_actions'])
+
     def test_switch_backend_overrides_all_stage_routes(self):
         from harness.runner import Runner
         task = self.service.store.get(1)

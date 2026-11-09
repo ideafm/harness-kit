@@ -155,3 +155,12 @@ it('восстанавливает удалённую задачу без ком
  expect(post.mock.calls[0][1]).toEqual({action:'restore'})
  expect(post).toHaveBeenCalledTimes(1)
 })
+
+it('кнопка В работу ставит backlog в очередь обычным идемпотентным действием',async()=>{
+ const post=vi.fn().mockResolvedValue({operation_id:'enqueue-op',status:'pending',task_id:1})
+ render(<TaskActions control={{...control,task:{...control.task,state:'backlog'},allowed_actions:['enqueue']}} session={session} transport={{projectId:'work',post,get:vi.fn().mockResolvedValue({status:'succeeded'})}} onRefresh={vi.fn()}/> )
+ fireEvent.click(screen.getByRole('button',{name:'В работу'}))
+ await screen.findByText('Команда выполнена контроллером')
+ expect(post.mock.calls[0][1]).toEqual({action:'enqueue'})
+ expect(post).toHaveBeenCalledTimes(1)
+})

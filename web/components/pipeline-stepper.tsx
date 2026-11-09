@@ -9,14 +9,14 @@ import {
   Check 
 } from 'lucide-react'
 import type { Task } from '@/lib/contracts'
-import { taskProgress, taskStateLabel } from '@/lib/task-presentation'
+import { formatDuration, taskProgress, taskStateLabel } from '@/lib/task-presentation'
 
 export const STAGES_CONFIG = [
-  { id: 'plan', label: 'План', defaultDuration: '14c', icon: FileText },
-  { id: 'dev', label: 'Разработка', defaultDuration: '2m 41c', icon: Code2 },
-  { id: 'checks', label: 'Проверки', defaultDuration: '38c', icon: CheckSquare },
-  { id: 'review', label: 'Ревью', defaultDuration: '52c', icon: Eye },
-  { id: 'acceptance', label: 'Приёмка', defaultDuration: 'ожидание', icon: ShieldCheck }
+  { id: 'plan', label: 'План', icon: FileText },
+  { id: 'dev', label: 'Разработка', icon: Code2 },
+  { id: 'checks', label: 'Проверки', icon: CheckSquare },
+  { id: 'review', label: 'Ревью', icon: Eye },
+  { id: 'acceptance', label: 'Приёмка', icon: ShieldCheck }
 ]
 
 export function PipelineStepper({ 
@@ -151,13 +151,7 @@ export function PipelineStepper({
                     ? 'text-zinc-400 dark:text-zinc-500' 
                     : 'text-zinc-400 dark:text-zinc-500 opacity-40 pointer-events-none cursor-not-allowed'
                 }`}>
-                  {isCurrent && stage.id === 'acceptance' 
-                    ? 'ожидание' 
-                    : isPassed 
-                    ? stage.defaultDuration 
-                    : isCurrent 
-                    ? 'в процессе...' 
-                    : '—'}
+                  {formatDuration(task.stage_timings?.[{plan:'plan',dev:'implement',checks:'check',review:'review',acceptance:'acceptance'}[stage.id] || stage.id])}
                 </span>
               </div>
             )

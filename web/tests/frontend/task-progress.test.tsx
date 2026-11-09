@@ -82,3 +82,17 @@ it('оставляет иконки этапов декоративными и �
  expect(icons).toHaveLength(5)
  for(const icon of icons)expect(icon.getAttribute('aria-hidden')).toBe('true')
 })
+
+import { PipelineStepper } from '@/components/pipeline-stepper'
+import { formatDuration } from '@/lib/task-presentation'
+it('показывает реальные времена контроллера без демонстрационных значений',()=>{
+ render(<PipelineStepper task={{id:1,state:'accepted',stage:'done',request:'Запрос',updated:1,artifacts:[],stage_timings:{plan:35,implement:18,check:15,review:32,acceptance:70}}}/> )
+ for(const duration of ['35 с','18 с','15 с','32 с','1 мин 10 с'])expect(screen.getByText(duration)).toBeTruthy()
+ expect(screen.queryByText('2m 41c')).toBeNull()
+})
+it('не выдумывает отсутствующие измерения',()=>{
+ expect(formatDuration(undefined)).toBe('—')
+ expect(formatDuration(-1)).toBe('—')
+ expect(formatDuration(NaN)).toBe('—')
+ expect(formatDuration(3661)).toBe('1 ч 1 мин')
+})

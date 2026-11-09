@@ -12,7 +12,7 @@ from .state import StateChanged
 
 
 HIGH_ACTIONS = {'approve_plan', 'revise_plan', 'accept_result', 'request_changes', 'reject_result'}
-ACTIONS = {'start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore'} | HIGH_ACTIONS
+ACTIONS = {'start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore', 'enqueue'} | HIGH_ACTIONS
 
 
 class OperatorError(ValueError):
@@ -44,6 +44,8 @@ class Operator:
             actions.append('pause')
         if state in {'paused', 'blocked', 'rate_limited'}:
             actions.append('resume')
+        if state == 'backlog':
+            actions.append('enqueue')
         if state == 'waiting':
             actions.append('answer')
         if state in {'paused', 'rate_limited'}:
@@ -129,7 +131,7 @@ class Operator:
     def validate(self, action, payload):
         keys = {'submit': {'request', 'approval_mode'}, 'start': {'action'}, 'pause': {'action'},
                 'resume': {'action'}, 'answer': {'action', 'question_id', 'text'},
-                'switch_backend': {'action', 'backend'}, 'delete': {'action'}, 'restore': {'action'},
+                'enqueue': {'action'}, 'switch_backend': {'action', 'backend'}, 'delete': {'action'}, 'restore': {'action'},
                 'approve_plan': {'action', 'plan_version', 'plan_digest'},
                 'revise_plan': {'action', 'plan_version', 'plan_digest', 'feedback'},
                 'accept_result': {'action', 'result_version', 'result_digest'},
@@ -169,6 +171,8 @@ class Operator:
                 raise OperatorError('stale_version', 'Версия изменилась', 409)
         if action in {'pause', 'resume', 'answer'}:
             self.service.operate(action, ident, payload.get('text'))
+        elif action == 'enqueue':
+            self.service.enqueue([ident], start=True)
         elif action == 'start':
             self.service.start(ident)
         elif action in {'delete', 'restore'}:

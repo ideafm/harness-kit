@@ -1,4 +1,4 @@
-export const labels:Record<string,string>={trashed:'Удалена',delete:'Удалить',restore:'Восстановить',backlog:'Бэклог',awaiting_approval:'Ожидает утверждения',accepted:'Принята',rejected:'Отклонена',waiting:'Ожидает ответа',blocked:'Заблокирована',rate_limited:'Ожидает снятия лимита',start:'Запустить',pause:'Пауза',resume:'Продолжить',answer:'Ответить',switch_backend:'Сменить исполнителя',approve_plan:'Утвердить план',revise_plan:'Вернуть план с замечаниями',accept_result:'Принять',request_changes:'Доработать',reject_result:'Отклонить',needs_input:'Нужен ответ',needs_permission:'Нужно разрешение',running:'В работе',done:'Приёмка не подтверждена',failed:'Ошибка',paused:'Приостановлена',queued:'В очереди',plan:'Спецификация и план',implement:'Реализация',check:'Проверки',planning:'Спецификация и план',implementation:'Реализация',review:'Ревью',checks:'Проверки'}
+export const labels:Record<string,string>={enqueue:'В работу',trashed:'Удалена',delete:'Удалить',restore:'Восстановить',backlog:'Бэклог',awaiting_approval:'Ожидает утверждения',accepted:'Принята',rejected:'Отклонена',waiting:'Ожидает ответа',blocked:'Заблокирована',rate_limited:'Ожидает снятия лимита',start:'Запустить',pause:'Пауза',resume:'Продолжить',answer:'Ответить',switch_backend:'Сменить исполнителя',approve_plan:'Утвердить план',revise_plan:'Вернуть план с замечаниями',accept_result:'Принять',request_changes:'Доработать',reject_result:'Отклонить',needs_input:'Нужен ответ',needs_permission:'Нужно разрешение',running:'В работе',done:'Приёмка не подтверждена',failed:'Ошибка',paused:'Приостановлена',queued:'В очереди',plan:'Спецификация и план',implement:'Реализация',check:'Проверки',planning:'Спецификация и план',implementation:'Реализация',review:'Ревью',checks:'Проверки'}
 export const label=(value:string)=>labels[value]||value
 export const date=(value:number)=>Number.isFinite(value)?new Date(value*1000).toLocaleString('ru-RU'):'Не сообщено'
 
@@ -30,4 +30,12 @@ export function taskStateIcon(task:PresentedTask){
  if(index===undefined||task.integration_error?.trim()||task.commit_error?.trim())return 'error'
  const icons:Record<string,string>={rate_limited:'limit',paused:'pause',failed:'error',blocked:'error',rejected:'error',waiting:'waiting',needs_input:'waiting',needs_permission:'limit',awaiting_approval:'waiting',queued:'waiting',backlog:'waiting',accepted:'check'}
  return icons[task.state]||progressIcons[index]
+}
+
+export function formatDuration(seconds:unknown){
+ if(typeof seconds!=='number'||!Number.isFinite(seconds)||seconds<0)return '—'
+ const value=Math.floor(seconds)
+ if(value<60)return `${value} с`
+ if(value<3600)return `${Math.floor(value/60)} мин ${value%60} с`
+ return `${Math.floor(value/3600)} ч ${Math.floor(value%3600/60)} мин`
 }

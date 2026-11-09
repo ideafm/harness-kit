@@ -80,7 +80,7 @@ export function TaskActions({
     }
     const command = pending.current
     if (!command) return
-    if (!['start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore'].includes(command.action) || !['start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore'].includes(String(command.body.action))) {
+    if (!['start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore', 'enqueue'].includes(command.action) || !['start', 'pause', 'resume', 'answer', 'switch_backend', 'delete', 'restore', 'enqueue'].includes(String(command.body.action))) {
       setMessage('Решение доступно только в доверенной форме контроллера.')
       return
     }
@@ -139,7 +139,7 @@ export function TaskActions({
   return (
     <div className="actions flex flex-col gap-2 w-full">
       <div className="flex flex-col gap-2 w-full">
-        {['start', 'pause', 'resume'].filter(a => allowed.includes(a)).map(a => (
+        {['enqueue', 'start', 'pause', 'resume'].filter(a => allowed.includes(a)).map(a => (
           <Button
             key={a}
             className="w-full flex items-center justify-center gap-1.5 cursor-pointer"

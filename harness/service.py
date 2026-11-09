@@ -47,6 +47,8 @@ class TaskService:
         data = task["data"]
         from .observation import descriptor
         result = {k: task[k] for k in ("id", "state", "stage", "updated")}
+        from .timings import stage_timings
+        result['stage_timings'] = stage_timings(task, self.store.events(task['id']))
         result['observation'] = descriptor(self.root, task['id'])
         for key in ("request", "question", "question_kind", "reason", "retry_at", "implementation_summary", "review_verdict",
                     "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order", "backend", "stage_backends", "model", "stage_models", "path_scope"):
