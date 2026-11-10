@@ -31,6 +31,8 @@ def parser():
     add.add_argument("request")
     add.add_argument("--approval", choices=MODES, default="auto")
     add.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
+    add.add_argument("--depends-on", action="append", type=task_id, default=None)
+    add.add_argument("--manual-acceptance", action="store_true")
     add.add_argument("--scope", default=None, help="Каталог scope внутри монорепозитория")
     add.add_argument('--backlog', action='store_true', help='Сохранить без разрешения на выполнение')
     enqueue = sub.add_parser('enqueue', help='Добавить выбранные задачи в очередь в указанном порядке')
@@ -187,7 +189,8 @@ def dispatch_store(args, store):
         print(summary(store.add(args.request, getattr(args, "approval", "auto"),
             'backlog' if getattr(args, 'backlog', False) else 'queue',
             backend=getattr(args, "backend", None),
-            scope=getattr(args, "scope", None))))
+            scope=getattr(args, "scope", None),
+            depends_on=getattr(args, "depends_on", None), manual_acceptance=getattr(args, "manual_acceptance", False))))
     elif action == 'enqueue':
         from .service import TaskService
         service = TaskService(store.root)
@@ -199,7 +202,7 @@ def dispatch_store(args, store):
             service.close()
     elif action == "status":
         priority = {"waiting": 0, "awaiting_approval": 0, "blocked": 1, "review": 2, "running": 3, "rate_limited": 4,
-                    "paused": 5, "queued": 6, "backlog": 7, "accepted": 8, "rejected": 9}
+                    "paused": 5, "queued": 6, "backlog": 7, "accepted": 8, "rejected": 9, "trashed": 10}
         for task in sorted(store.tasks(), key=lambda t: (priority[t["state"]], t["id"])):
             print(summary(task))
     elif action == "doctor":

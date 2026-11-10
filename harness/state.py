@@ -67,9 +67,16 @@ class Store:
         if (stat.st_dev, stat.st_ino) != self.identity:
             raise RuntimeError("Экземпляр проекта заменён; перезапустите контроллер")
 
-    def add(self, request, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False):
+    def add(self, request, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False, depends_on=None):
         if type(manual_acceptance) is not bool:
             raise ValueError("manual_acceptance должен быть логическим значением")
+        dependencies = [] if depends_on is None else depends_on
+        if (not isinstance(dependencies, list) or len(dependencies) > 100
+                or any(type(ident) is not int or ident < 1 for ident in dependencies)
+                or len(set(dependencies)) != len(dependencies)):
+            raise ValueError('Нужен список до 100 разных номеров задач')
+        for ident in dependencies:
+            self.get(ident)
         from .approval import validate_mode
         from .security import normalize_scope, validate_backend
         validate_mode(approval_mode)
@@ -104,6 +111,8 @@ class Store:
         self.ensure_current()
         with self.transaction():
             data = {"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode, "backend": selected_backend}
+            if dependencies:
+                data["depends_on"] = list(dependencies)
             if manual_acceptance:
                 data["manual_acceptance"] = True
             if validated_stage_backends:
@@ -135,8 +144,24 @@ class Store:
         return max((max(task['id'], task['data'].get('queue_order', 0)) for task in self.tasks()), default=0) + 1
 
     def runnable(self):
-        return sorted((task for task in self.tasks() if task['state'] in {'queued', 'running', 'rate_limited'}),
+        return sorted((task for task in self.tasks() if task['state'] in {'queued', 'running', 'rate_limited'}
+                       and (task['state'] == 'running' or not self.dependency_wait(task))),
             key=lambda task: (task['state'] != 'running', task['data'].get('queue_order', task['id']), task['id']))
+
+    def dependency_wait(self, task):
+        waiting = []
+        for ident in task['data'].get('depends_on', []):
+            try:
+                dependency = self.get(ident)
+            except ValueError:
+                waiting.append({'id': ident, 'state': 'missing'})
+                continue
+            data = dependency['data']
+            if (dependency['state'] != 'accepted' or not data.get('integration')
+                    or data.get('integration_error') or data.get('auto_apply_error')
+                    or data.get('integration_in_progress') or data.get('auto_apply_pending')):
+                waiting.append({'id': ident, 'state': dependency['state']})
+        return waiting
 
     def enqueue(self, identifiers):
         if not isinstance(identifiers, list) or not 1 <= len(identifiers) <= 100 or any(type(ident) is not int or ident < 1 for ident in identifiers) or len(set(identifiers)) != len(identifiers):

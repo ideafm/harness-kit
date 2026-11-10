@@ -391,3 +391,22 @@ class WebTests(unittest.TestCase):
         data = json.loads(body)['data']
         self.assertIn('backend', data['project'])
         self.assertEqual(data['project']['backend'], 'codex')
+
+    def test_reject_widget_accepts_empty_comment_without_typing_task_number(self):
+        self.fixture.run_task()
+        _, _, body = self.app.dispatch('GET', '/api/v1/tasks/1/control', self.headers)
+        url = json.loads(body)['data']['confirmation_widgets']['reject_result']
+        path = url.split(f':{CONFIRM_PORT}', 1)[1]
+        headers = {'Host': f'127.0.0.1:{CONFIRM_PORT}'}
+        status, _, body = self.app.dispatch('GET', path, headers, confirmation=True)
+        self.assertEqual(status, 200)
+        page = body.decode()
+        self.assertNotIn('Введите TASK-', page)
+        self.assertNotIn('name="text" required', page)
+        token = re.search(r'name="token" value="([^"]+)"', page)[1]
+        payload = urlencode({'token': token, 'confirmation': 'TASK-001', 'text': ''}).encode()
+        headers.update({'Origin': f'http://127.0.0.1:{CONFIRM_PORT}', 'Content-Type': 'application/x-www-form-urlencoded'})
+        self.assertEqual(self.app.dispatch('POST', '/confirm/embed', headers, payload, True)[0], 200)
+        task = self.fixture.store.get(1)
+        self.assertEqual(task['state'], 'rejected')
+        self.assertEqual(task['data']['reason'], 'Отклонено пользователем')

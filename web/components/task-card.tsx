@@ -254,7 +254,7 @@ export function TaskCard({
           <div className="space-y-2 flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                Что требуется от вас
+                {task.state === 'accepted' ? 'Результат' : 'Что требуется от вас'}
               </h3>
               <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
                 applied
@@ -286,20 +286,20 @@ export function TaskCard({
             <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {task.state === 'paused'
                 ? 'Задача приостановлена'
-                : task.question || (acceptance ? 'Результат задачи принят. Подтвердите применение в git или запросите доработку.' : guidance)}
+                : task.question || (acceptance ? 'Готово к приёмке' : guidance)}
             </div>
 
-            <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+            {(task.state === 'paused' || task.question || acceptance || applied) && <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
               {task.state === 'paused'
                 ? 'Задача приостановлена. Нажмите «Продолжить», чтобы возобновить выполнение агентом.'
                 : task.question
                 ? 'Агент запросил уточнение для продолжения работы над задачей. Ответьте на вопрос, чтобы возобновить выполнение.'
                 : acceptance
-                ? 'Автономный агент успешно выполнил все этапы пайплайна. Все проверки типов tsc и ESLint пройдены без ошибок.'
+                ? 'Посмотрите результат и выберите действие.'
                 : applied
-                ? `Ветка ${hasBranch ? branchName : 'main'} зафиксирована. Все артефакты синхронизированы.`
-                : 'Изолированный контейнер воркера запущен. Агент вносит изменения в кодовую базу.'}
-            </p>
+                ? 'Результат применён к основной версии проекта.'
+                : guidance}
+            </p>}
 
             {/* Toggle Details Disclosure */}
             <details className="mt-2 text-xs group">
@@ -315,7 +315,7 @@ export function TaskCard({
                     {task.reason}
                   </p>
                 )}
-                {task.state !== 'rate_limited' && !task.reason?.trim() && (
+                {task.state !== 'rate_limited' && !['accepted','review'].includes(task.state) && !task.reason?.trim() && (
                   <p className="text-xs text-zinc-600 dark:text-zinc-400 font-sans">
                     <strong>Причина ожидания: </strong>
                     {reason}
@@ -363,6 +363,8 @@ export function TaskCard({
             {['automatic','human'].includes(task.accepted_by || '') && <p className="text-xs text-zinc-500">{task.accepted_by === 'automatic' ? (task.integration && !task.integration_error && !task.commit_error && !task.auto_apply_error ? 'Применено автоматически' : 'Автоматическая приёмка; применение требует проверки') : 'Принято пользователем'}</p>}
             {task.auto_apply_error && <p role="alert">Автоприменение остановлено: {task.auto_apply_error}</p>}
             {task.manual_acceptance && <p className="text-xs">Обязательная ручная приёмка</p>}
+            {!!task.dependency_wait?.length && <p role="status">Ожидает применения задач: {task.dependency_wait.map(item=>`#${item.id}`).join(', ')}</p>}
+            {!!task.depends_on?.length && !task.dependency_wait?.length && <p className="text-xs">Зависимости применены: {task.depends_on.map(id=>`#${id}`).join(', ')}</p>}
             <section aria-label="Доступные действия" className="available-actions flex flex-col items-stretch gap-2 w-full">
               {control ? (
                 <TaskActions 
@@ -383,6 +385,7 @@ export function TaskCard({
               )}
             </section>
 
+            <details><summary className="text-xs cursor-pointer">Git</summary>
             <button
               onClick={handleCopyBranch}
               disabled={!hasBranch}
@@ -396,6 +399,7 @@ export function TaskCard({
               {copiedBranch ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <GitBranch className="w-3 h-3 text-zinc-400" />}
               <span>{copiedBranch ? 'Скопировано!' : 'git branch'}</span>
             </button>
+            </details>
           </div>
         </div>
 
@@ -410,11 +414,11 @@ export function TaskCard({
 
         {/* Acceptance guidance description */}
         {acceptance && (
-          <div className="result-summary p-3 bg-zinc-100/70 dark:bg-zinc-800/60 rounded-lg text-xs text-zinc-600 dark:text-zinc-400">
-            <p>
+          <details className="result-summary p-3 bg-zinc-100/70 dark:bg-zinc-800/60 rounded-lg text-xs text-zinc-600 dark:text-zinc-400">
+            <summary className="cursor-pointer">Как работают решения</summary><p>
               Принять — создать коммит и выполнить merge в основную копию. Доработать — продолжить рабочую копию. Отклонить — убрать предпросмотр без изменения основной версии.
             </p>
-          </div>
+          </details>
         )}
 
         {/* Accepted Error details / Applied branch information */}

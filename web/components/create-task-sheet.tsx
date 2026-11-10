@@ -51,6 +51,7 @@ export function CreateTaskSheet({
   const [text, setText] = useState(restored?.body.request ?? '')
   const [mode, setMode] = useState(restored?.body.approval_mode ?? 'approve-plan')
   const [backend, setBackend] = useState(restored?.body.backend ?? 'default')
+  const [dependencies,setDependencies] = useState(restored?.body.depends_on?.join(', ') ?? '')
   const [manualAcceptance,setManualAcceptance] = useState(restored?.body.manual_acceptance ?? false)
   const [autoStart, setAutoStart] = useState(restored?.body.placement ? restored.body.placement !== 'backlog' : true)
   const [busy, setBusy] = useState(false)
@@ -63,9 +64,17 @@ export function CreateTaskSheet({
     lock.current = true
     setBusy(true)
     setError('')
-    const body: { request: string; approval_mode: string; placement?: string; backend?: string; manual_acceptance?: boolean } = {
+    const body: { request: string; approval_mode: string; placement?: string; backend?: string; manual_acceptance?: boolean; depends_on?: number[] } = {
       request: text,
       approval_mode: mode
+    }
+    if (dependencies.trim()) {
+      const numbers=dependencies.split(',').map(part=>Number(part.trim()))
+      if(numbers.length>100||numbers.some(number=>!Number.isSafeInteger(number)||number<1)||new Set(numbers).size!==numbers.length){
+        setError('Укажите разные положительные номера задач через запятую')
+        lock.current=false;setBusy(false);return
+      }
+      body.depends_on=numbers
     }
     if (manualAcceptance) body.manual_acceptance = true
     if (backend !== 'default') {
@@ -204,6 +213,10 @@ export function CreateTaskSheet({
               </div>
             </div>
 
+            <label className="text-xs">Зависит от задач
+              <input className="w-full rounded border p-2 mt-1" value={dependencies} onChange={event=>setDependencies(event.target.value)} placeholder="Например: 14, 15" disabled={busy}/>
+              <span className="text-zinc-500">Пусто — независимая задача. Запуск после применения всех указанных результатов.</span>
+            </label>
             <label className="flex items-center gap-2 text-xs">
               <input type="checkbox" checked={manualAcceptance} onChange={event=>setManualAcceptance(event.target.checked)} disabled={busy}/>
               Обязательно показать мне перед применением

@@ -471,6 +471,10 @@ export function TaskTable({
           BadgeIcon = Clock
         }
 
+        if (t.state !== 'running' && t.dependency_wait?.length) {
+          badgeLabel = 'Ждёт зависимости'
+          BadgeIcon = Clock
+        }
         if (t.state === 'trashed') {
           badgeLabel = 'Удалена'
           BadgeIcon = Trash2

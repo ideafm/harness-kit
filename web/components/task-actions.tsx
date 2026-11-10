@@ -5,7 +5,7 @@ import { AppIcon } from './app-icon'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { TrustedDecisionWidget } from './trusted-decision-widget'
-import { TaskDetailsDialog } from './task-details-dialog'
+import { DecisionDialog } from './decision-dialog'
 import { Dialog } from 'radix-ui'
 import { AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription, AlertDialogCancel } from './ui/alert-dialog'
 import { ApiError, withinLimit } from '@/lib/http-transport'
@@ -152,7 +152,7 @@ export function TaskActions({
         ))}
 
         {allowed.includes('delete') && (
-          <>
+          <details><summary className="text-xs cursor-pointer">Другие действия</summary>
             <Button variant="outline" disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => setDeleteOpen(true)}>Удалить задачу</Button>
             <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
               <AlertDialogContent>
@@ -163,7 +163,7 @@ export function TaskActions({
                 <Button disabled={commandsDisabled || busy || Boolean(pending.current)} onClick={() => void run('delete')}>Переместить в удалённые</Button>
               </AlertDialogContent>
             </AlertDialog>
-          </>
+          </details>
         )}
         {control.task.state === 'running' && <Button variant="outline" disabled title="Работающую задачу удалить нельзя">Удалить задачу</Button>}
         {allowed.includes('restore') && <Button disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => void run('restore')}>Восстановить задачу</Button>}
@@ -269,6 +269,7 @@ export function TaskActions({
           )
         )}
 
+        <div className="flex flex-col gap-2">
         {['approve_plan', 'revise_plan', 'accept_result', 'request_changes', 'reject_result'].filter(a => allowed.includes(a)).map(a => {
           const widget = (
             <TrustedDecisionWidget
@@ -280,14 +281,15 @@ export function TaskActions({
               onRefresh={onRefresh}
             />
           )
-          return a !== 'revise_plan' ? (
+          return !['revise_plan','request_changes','reject_result'].includes(a) ? (
             <div key={a} className="w-full">{widget}</div>
           ) : (
-            <TaskDetailsDialog key={a} title={label(a)}>
+            <DecisionDialog key={a} title={label(a)} disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token}>
               {widget}
-            </TaskDetailsDialog>
+            </DecisionDialog>
           )
         })}
+        </div>
       </div>
 
       {control.task.state === 'needs_permission' && (

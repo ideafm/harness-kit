@@ -300,6 +300,8 @@ class Runner:
             task = self.store.get(ident)
             if task["state"] not in {"queued", "rate_limited", "running"}:
                 raise ValueError(f"Задача в состоянии {task['state']}; используйте resume или answer")
+            if task["state"] != "running" and self.store.dependency_wait(task):
+                return
             if task["state"] == "rate_limited" and task["data"].get("retry_at", 0) > time.time():
                 return
             try:
@@ -323,13 +325,19 @@ class Runner:
                 active_backend.preflight()
                 if self.store.get(ident)["state"] == "paused":
                     return
-                previous_state = task["state"]
-                task['data'].pop('retry_at', None)
-                task['data'].pop('reason', None)
-                task["state"] = "running"
-                from .auto_apply import bind_policy
-                bind_policy(self.store, task)
-                self.store.save(task, "started", {"stage": task["stage"], "backend": selected_backend}, expected=previous_state, expected_updated=task["updated"])
+                with self.store.transaction():
+                    if task["state"] != "running" and self.store.dependency_wait(task):
+                        return
+                    if 'dependency_results' not in task['data']:
+                        task['data']['dependency_results'] = [self.store.get(number)['data']['integration']
+                            for number in task['data'].get('depends_on', [])]
+                    previous_state = task["state"]
+                    task['data'].pop('retry_at', None)
+                    task['data'].pop('reason', None)
+                    task["state"] = "running"
+                    from .auto_apply import bind_policy
+                    bind_policy(self.store, task)
+                    self.store.save(task, "started", {"stage": task["stage"], "backend": selected_backend}, expected=previous_state, expected_updated=task["updated"])
                 self.prepare(task)
                 previous_attempts = dict(task['data']['attempts'])
                 while task["stage"] != "done":

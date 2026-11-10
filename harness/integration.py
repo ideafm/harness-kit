@@ -84,9 +84,21 @@ def prepare_deployment(store, ident):
         return deployment_receipt(store, ident)
 
 
+def complete_integration(store, ident):
+    task = store.get(ident)
+    task['data']['integration_in_progress'] = False
+    task['data'].pop('auto_apply_error', None)
+    if task['data'].get('accepted_by') == 'automatic':
+        task['data']['auto_apply_pending'] = False
+    store.save(task, 'integration_verified', expected='accepted', expected_updated=task['updated'])
+
+
 def apply_accepted(store, ident):
     result = commit_accepted(store, ident)
     with lock(store, 'git-results.lock'):
+        task = store.get(ident)
+        task['data']['integration_in_progress'] = True
+        store.save(task, 'integration_started', expected='accepted', expected_updated=task['updated'])
         task = store.get(ident)
         config = json.loads((store.home / 'config.json').read_text())
         branch = config.get('integration_branch')
@@ -131,6 +143,7 @@ def apply_accepted(store, ident):
             if deployed.get('task') != ident and type(deployed.get('task')) is int:
                 newer = store.get(deployed['task'])['data'].get('integration')
                 if newer and newer['commit'] != record['commit'] and ancestor(store.root, record['commit'], newer['commit']):
+                    complete_integration(store, ident)
                     return record
             receipt = prepare_deployment(store, ident)
             if receipt.is_symlink():
@@ -142,6 +155,7 @@ def apply_accepted(store, ident):
             from .web import WebApplication
             WebApplication(store.root, 'preflight', export, receipt).static('/')
             atomic_json(store.home / 'web-ui.json', {'task': ident, 'export': str(export), 'receipt': str(receipt)})
+        complete_integration(store, ident)
         return record
 
 

@@ -232,7 +232,7 @@ def verify_servers(command):
 
 
 def first_subcommand(arguments):
-    value_flags = {"--project", "--check", "--model", "--backend", "--bin-dir", "--adapter", "--mode", "--from-task", "--approval", "--version", "--confirm", "--reason", "--codex", "--agy", "--timeout"}
+    value_flags = {"--depends-on", "--project", "--check", "--model", "--backend", "--bin-dir", "--adapter", "--mode", "--from-task", "--approval", "--version", "--confirm", "--reason", "--codex", "--agy", "--timeout"}
     skip_next = False
     for token in arguments:
         if skip_next:

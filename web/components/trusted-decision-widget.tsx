@@ -4,10 +4,10 @@ import type { Control,Session } from '@/lib/contracts'
 import { widgetUrl } from '@/lib/controller-links'
 import { label } from '@/lib/task-presentation'
 export function TrustedDecisionWidget({control,session,project,action,onRefresh,disabled=false}:{disabled?:boolean;control:Control;session?:Session;project?:string;action:string;onRefresh:()=>void}){
- const frame=useRef<HTMLIFrameElement>(null);const [height,setHeight]=useState(120);const [oversized,setOversized]=useState(false)
+ const frame=useRef<HTMLIFrameElement>(null);const [height,setHeight]=useState(action==='accept_result'?42:120);const [oversized,setOversized]=useState(false)
  const url=session?.csrf_token&&control.allowed_actions.includes(action)?widgetUrl(control.confirmation_widgets?.[action],session.confirmation_origin):undefined
  useEffect(()=>{
-  setHeight(120);setOversized(false)
+  setHeight(action==='accept_result'?42:120);setOversized(false)
   if(!url||!project)return
   const receive=(event:MessageEvent)=>{
    if(event.origin!==session?.confirmation_origin||event.source!==frame.current?.contentWindow)return

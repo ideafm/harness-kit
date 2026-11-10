@@ -164,3 +164,17 @@ it('кнопка В работу ставит backlog в очередь обыч
  expect(post.mock.calls[0][1]).toEqual({action:'enqueue'})
  expect(post).toHaveBeenCalledTimes(1)
 })
+
+it('модалка доработки сохраняет тот же iframe после закрытия',()=>{
+ const props={control:{...control,allowed_actions:['request_changes'],confirmation_widgets:{request_changes:session.confirmation_origin+'/confirm/embed?action=request_changes'}},session,transport:{projectId:'draft-modal',get:vi.fn(),post:vi.fn()},onRefresh:vi.fn()}
+ render(<TaskActions {...props}/> )
+ const iframe=screen.getByTitle('Доработать')
+ fireEvent.click(screen.getByRole('button',{name:'Доработать'}))
+ expect(screen.getByRole('dialog')).toBeTruthy()
+ fireEvent.click(screen.getByRole('button',{name:'Закрыть'}))
+ expect(screen.queryByRole('dialog')).toBeNull()
+ expect(screen.getByTitle('Доработать')).toBe(iframe)
+ fireEvent.click(screen.getByRole('button',{name:'Доработать'}))
+ expect(screen.getByTitle('Доработать')).toBe(iframe)
+ expect(props.transport.post).not.toHaveBeenCalled()
+})

@@ -358,3 +358,14 @@ it('создание сохраняет обязательную ручную п
  await vi.waitFor(()=>expect(post).toHaveBeenCalledTimes(1))
  expect(post.mock.calls[0][1].manual_acceptance).toBe(true)
 })
+
+it('создание передаёт явные зависимости текущего проекта',async()=>{
+ const post=vi.fn().mockResolvedValue({task:{id:3},revision:'r1'})
+ render(<CreateTaskSheet transport={{get:vi.fn(),post}} session={{csrf_token:'csrf',confirmation_origin:'http://127.0.0.1:47832'}} enabled onCreated={vi.fn()}/> )
+ fireEvent.click(screen.getByText('＋ Новая задача'))
+ fireEvent.change(screen.getByLabelText('Запрос'),{target:{value:'Зависимая задача'}})
+ fireEvent.change(screen.getByLabelText(/Зависит от задач/),{target:{value:'1, 2'}})
+ fireEvent.click(screen.getByText('Создать задачу'))
+ await vi.waitFor(()=>expect(post).toHaveBeenCalledTimes(1))
+ expect(post.mock.calls[0][1].depends_on).toEqual([1,2])
+})
