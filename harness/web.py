@@ -306,9 +306,11 @@ class WebApplication:
                 confirmation_field = f'<input type="hidden" name="confirmation" value="TASK-{ident:03}">'
                 button_confirmation = ''
                 if embedded:
+                    progress = json.dumps('Применяем…' if action == 'accept_result' else 'Отправляем…')
+                    submit_script = '<script>document.querySelector("form").addEventListener("submit",function(){const b=this.querySelector("button");b.disabled=true;b.textContent=' + progress + ';});</script>'
                     return self.page(TITLES[action], ('' if action == 'accept_result' else f'<p class="context">{html.escape(root.name)} · TASK-{ident:03}</p>') +
                         f'<form method="post" action="/confirm/embed"><input type="hidden" name="token" value="{token}">{field}{confirmation_field}'
-                        f'<button type="submit"{button_confirmation}>{TITLES[action]}</button></form>', embedded=True)
+                        f'<button type="submit"{button_confirmation}>{TITLES[action]}</button></form>' + submit_script, embedded=True)
                 return self.page(TITLES[action], f'<p>Проект <strong>{html.escape(root.name)}</strong> · {html.escape(project_id(root))}</p><p>Задача <strong>TASK-{ident:03}</strong></p><p>{html.escape(task["request"][:500])}</p>'
                     f'<p>Версия: <code>{current["version"]}</code></p><p>Риск: {html.escape(task.get("risk", "не указан"))}</p>'
                     '<p>Это подтверждение обслуживает контроллер. Приёмка применяет результат к основной версии проекта.</p>'
