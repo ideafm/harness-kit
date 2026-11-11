@@ -225,7 +225,7 @@ export function TaskCard({
         </h2>
       </div>
 
-      <section aria-label="Пайплайн задачи">
+      <section aria-label="Пайплайн задачи" className="flex flex-col gap-[16px]">
         <ExecutionStatus task={task}/>
         <TaskAttachments files={task.attachments} task={task.id} transport={transport}/>
         <PipelineStepper 
