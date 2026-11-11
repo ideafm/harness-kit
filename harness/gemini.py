@@ -25,7 +25,8 @@ RATE_LIMIT_MARKERS = (
     "429",
 )
 
-SUPPORTED_AGY_VERSIONS = ("1.5.3",)
+SUPPORTED_AGY_VERSIONS = ("1.5.3", "1.5.5", "1.5.6")
+IMAGE_AGY_VERSIONS = ("1.5.5", "1.5.6")
 VERIFIED_SETTINGS_KEYS = frozenset({"permissions"})
 FORBIDDEN_SETTINGS_KEYS = frozenset({
     "mcpServers",
@@ -82,6 +83,10 @@ BASE_DENY_RULES = (
     "write_file(id_ecdsa*)",
     "write_file(.*)",
 )
+
+
+def agy_env():
+    return {**safe_env(), 'AGY_CLI_DISABLE_AUTO_UPDATE': 'true'}
 
 
 def sdk_available():
@@ -214,7 +219,7 @@ def verify_agy_contract(agy_path):
         sha256 = hashlib.sha256(resolved.read_bytes()).hexdigest()
     ver_proc = subprocess.run(
         [str(agy_path), "--version"],
-        env=safe_env(),
+        env=agy_env(),
         capture_output=True,
         text=True,
         timeout=10,
@@ -229,7 +234,7 @@ def verify_agy_contract(agy_path):
         )
     help_proc = subprocess.run(
         [str(agy_path), "--help"],
-        env=safe_env(),
+        env=agy_env(),
         capture_output=True,
         text=True,
         timeout=10,
@@ -244,7 +249,7 @@ def run_workspace_command(workspace, writable, command, timeout=30, config=None)
     resolved = validate_workspace(workspace)
     sandbox_cfg = config if isinstance(config, dict) else {"backend": "gemini", "sandbox": "/usr/bin/sandbox-exec"}
     wrapped = sandbox_command(sandbox_cfg, resolved, writable, list(command))
-    return subprocess.run(wrapped, cwd=str(resolved), env=safe_env(), capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(wrapped, cwd=str(resolved), env=agy_env(), capture_output=True, text=True, timeout=timeout)
 
 
 def format_stream_input(prompt, stage="plan", allowed_files=None, scope=None):
@@ -257,7 +262,7 @@ def format_stream_input(prompt, stage="plan", allowed_files=None, scope=None):
     elif allowed_files:
         guard_lines.append("- Изменяй только разрешённые файлы плана: " + ", ".join(allowed_files))
     if scope:
-        guard_lines.append(f"- Работай строго в пределах каталога scope: {scope}")
+        guard_lines.append(f"- Исследуй и изменяй код только в пределах scope: {scope}. Отдельно разрешено чтение изображений текущей задачи, явно переданных контроллером.")
     full_prompt = prompt.rstrip() + "\n\n" + "\n".join(guard_lines)
     return json.dumps({"event": "user", "message": {"content": full_prompt}}, ensure_ascii=False) + "\n"
 
@@ -363,7 +368,7 @@ class Gemini:
         verify_agy_contract(agy)
         return result
 
-    def build_command(self, stage, workspace, schema, answer, allowed_files=None, scope=None):
+    def build_command(self, stage, workspace, schema, answer, allowed_files=None, scope=None, input_directory=None):
         if stage not in {"plan", "implement", "review"}:
             raise ValueError(f"Неизвестный этап: {stage}")
         resolved_workspace = validate_workspace(workspace)
@@ -374,6 +379,14 @@ class Gemini:
         agy = None if mode == "sdk" else resolve_agy(self.config)
         if agy:
             settings = stage_settings(resolved_workspace, writable, allowed_files=allowed_files, scope=scope)
+            if input_directory is not None:
+                settings['permissions']['deny'].extend([f'write_file({input_directory})', f'write_file({input_directory}/**)', f'write_file({input_directory}/*)'])
+                version_result = subprocess.run([agy, '--version'], capture_output=True, text=True, timeout=10, env=agy_env())
+                if version_result.returncode != 0 or not any(re.search(r'\b' + re.escape(version) + r'\b', version_result.stdout + version_result.stderr) for version in IMAGE_AGY_VERSIONS):
+                    raise RuntimeError('Image-tool контракт подтверждён только для agy 1.5.5/1.5.6')
+                help_result = subprocess.run([agy, '--help'], capture_output=True, text=True, timeout=10, env=agy_env())
+                if '--add-dir' not in help_result.stdout + help_result.stderr:
+                    raise RuntimeError('agy не поддерживает безопасное подключение каталога изображений')
             command = [
                 agy,
                 "--sandbox",
@@ -389,12 +402,16 @@ class Gemini:
                 "--json-schema",
                 str(schema),
             ]
+            if input_directory is not None:
+                command += ['--add-dir', str(input_directory)]
             if self.config.get("model"):
                 command += ["--model", self.config["model"]]
             command += ["-p", ""]
             if any(token in {"--dangerously-skip-permissions", "-c", "--continue"} for token in command):
                 raise RuntimeError("Обнаружен запрещённый аргумент CLI в команде Gemini")
             return command
+        if input_directory is not None:
+            raise RuntimeError("Изображения требуют agy CLI с --add-dir; SDK multimodal контракт не подтверждён")
         if not sdk_available():
             raise RuntimeError("Antigravity CLI (agy) или Python SDK (google-antigravity) не найден")
         command = [
@@ -416,8 +433,18 @@ class Gemini:
         return command
 
     def call(self, stage, workspace, folder, prompt, interrupted, allowed_files=None, scope=None):
-        if self.config.get('attachment_images'):
-            raise RuntimeError('Для задачи с изображениями выберите Codex: текущий адаптер Gemini поддерживает только текстовые вложения')
+        paths = self.config.get('attachment_images', [])
+        if not paths:
+            return self._call(stage, workspace, folder, prompt, interrupted, allowed_files, scope)
+        from .attachment_view import image_view
+        with image_view(paths) as (input_directory, records):
+            references = '\n'.join(f"Изображение {index + 1}: {record['path']}" for index, record in enumerate(records))
+            prompt += ('\nКонтроллер предоставил изображения текущей задачи в отдельном read-only каталоге. '
+                       'Обязательно открой каждое через view_file до планирования или проверки результата. '
+                       'Это разрешение на чтение только перечисленных файлов; не изменяй их и не открывай соседние каталоги.\n' + references)
+            return self._call(stage, workspace, folder, prompt, interrupted, allowed_files, scope, input_directory)
+
+    def _call(self, stage, workspace, folder, prompt, interrupted, allowed_files=None, scope=None, input_directory=None):
         resolved_workspace = validate_workspace(workspace)
         writable = stage == "implement"
         before_digests = None if writable else workspace_snapshot_digests(resolved_workspace)
@@ -425,7 +452,7 @@ class Gemini:
         answer = folder / f"{stage}.response.json"
         atomic_json(schema, SCHEMA)
         answer.unlink(missing_ok=True)
-        command = self.build_command(stage, resolved_workspace, schema, answer, allowed_files=allowed_files, scope=scope)
+        command = self.build_command(stage, resolved_workspace, schema, answer, allowed_files=allowed_files, scope=scope, **({'input_directory': input_directory} if input_directory is not None else {}))
         uses_stream_json = "--input-format" in command and "stream-json" in command
         stdin_payload = (
             format_stream_input(prompt, stage=stage, allowed_files=allowed_files, scope=scope)
@@ -433,7 +460,7 @@ class Gemini:
             else prompt
         )
         log = folder / f"{stage}.jsonl"
-        code = execute(command, resolved_workspace, log, self.config["timeout"], interrupted, stdin_payload, env=safe_env())
+        code = execute(command, resolved_workspace, log, self.config["timeout"], interrupted, stdin_payload, env=agy_env())
         if not writable:
             after_digests = workspace_snapshot_digests(resolved_workspace)
             if after_digests != before_digests:

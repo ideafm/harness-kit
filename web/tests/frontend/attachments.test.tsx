@@ -39,3 +39,17 @@ it('вставляет файл из буфера при открытой фор
  fireEvent.paste(document,{clipboardData:{files:[new File(['clipboard'],'brief.md')]}})
  await vi.waitFor(()=>expect(post).toHaveBeenCalledTimes(1))
 })
+it('позволяет создать задачу Gemini с изображением',async()=>{
+ const {CreateTaskSheet}=await import('@/components/create-task-sheet')
+ const image={...record,name:'screen.png',mime:'image/png'}
+ const post=vi.fn().mockImplementation(async(path:string)=>path==='attachments'?image:{task:{id:27},revision:'r27'})
+ const created=vi.fn()
+ render(<CreateTaskSheet transport={{get:vi.fn(),post}} session={{csrf_token:'csrf',confirmation_origin:''}} enabled defaultBackend="gemini" onCreated={created}/> )
+ fireEvent.click(screen.getByRole('button',{name:'＋ Новая задача'}))
+ fireEvent.change(screen.getByLabelText('Запрос'),{target:{value:'Изучи скриншот'}})
+ fireEvent.change(screen.getByLabelText('Добавить вложения'),{target:{files:[new File(['image fixture'],'screen.png',{type:'image/png'})]}})
+ await screen.findByText('screen.png')
+ fireEvent.click(screen.getByRole('button',{name:'Создать задачу'}))
+ await vi.waitFor(()=>expect(created).toHaveBeenCalledWith(27))
+ expect(post).toHaveBeenCalledWith('tasks',expect.objectContaining({attachments:[image.id]}),expect.any(String),'csrf')
+})

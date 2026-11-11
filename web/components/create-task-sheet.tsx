@@ -178,7 +178,6 @@ export function CreateTaskSheet({
             </div>
 
             <AttachmentPicker files={files} onChange={setFiles} onBusy={setUploading} transport={transport} csrf={session?.csrf_token} disabled={busy||!enabled||Boolean(pending.current)}/>
-            {files.some(file=>file.mime.startsWith('image/'))&&(backend==='gemini'||backend==='default'&&defaultBackend==='gemini')&&<p role="alert" className="text-xs text-amber-700">Для задачи с изображениями выберите Codex. Gemini пока поддерживает текстовые вложения.</p>}
             {/* Backend & Approval Mode grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -277,7 +276,7 @@ export function CreateTaskSheet({
               <Button
                 size="sm"
                 className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 cursor-pointer shadow-xs hover:shadow"
-                disabled={busy || uploading || files.some(file=>file.mime.startsWith('image/'))&&(backend==='gemini'||backend==='default'&&defaultBackend==='gemini') || !session?.csrf_token || !text.trim() || !withinLimit(text, 51200)}
+                disabled={busy || uploading || !session?.csrf_token || !text.trim() || !withinLimit(text, 51200)}
                 onClick={() => void submit()}
               >
                 <Send className="w-3.5 h-3.5" />
