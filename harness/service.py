@@ -48,7 +48,11 @@ class TaskService:
         from .observation import descriptor
         result = {k: task[k] for k in ("id", "state", "stage", "updated")}
         from .timings import stage_timings
-        result['stage_timings'] = stage_timings(task, self.store.events(task['id']))
+        events = self.store.events(task['id'])
+        result['stage_timings'] = stage_timings(task, events)
+        from .execution_status import describe
+        result['execution'] = describe(self.store, task, events)
+        result['attachments'] = data.get('attachments', [])
         result['depends_on'] = data.get('depends_on', [])
         result['dependency_wait'] = self.store.dependency_wait(task)
         if data.get('preview_error'):
@@ -153,13 +157,15 @@ class TaskService:
                 status = {"running": True, "pid": process.pid}
         return {"task": self.show(ident), "worker": status}
 
-    def submit(self, request, start=True, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False, depends_on=None):
+    def submit(self, request, start=True, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False, depends_on=None, attachments=None):
         if not isinstance(request, str) or not request.strip() or len(request) > 50000:
             raise ValueError("Нужен текст задачи от 1 до 50000 символов")
         if type(start) is not bool:
             raise ValueError('start должен быть логическим значением')
         if backend is not None:
             backend = validate_backend(backend)
+        from .attachments import resolve
+        inputs = resolve(self.store, attachments or [])
         task = self.store.add(
             request,
             approval_mode,
@@ -172,6 +178,9 @@ class TaskService:
             manual_acceptance=manual_acceptance,
             depends_on=depends_on,
         )
+        if inputs:
+            task['data']['attachments'] = inputs
+            self.store.save(task, 'attachments_added', {'count': len(inputs)})
         if start and placement == 'queue':
             try:
                 return self.start(task["id"])

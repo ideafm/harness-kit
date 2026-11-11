@@ -10,7 +10,7 @@ export function projectTransport(base:Transport,id:string):Transport {
 export const pendingSlot=(transport:Transport,slot:string)=>transport.projectId===undefined?slot:`project:${encodeURIComponent(transport.projectId)}:${slot}`
 
 export type PendingCommand = {action:string;taskId:number;body:Record<string,unknown>;revision:string;key:string;operation?:string}
-export type PendingCreation = {body:{request:string;approval_mode:string;placement?:string;backend?:string;manual_acceptance?:boolean;depends_on?:number[]};key:string}
+export type PendingCreation = {body:{request:string;approval_mode:string;placement?:string;backend?:string;manual_acceptance?:boolean;depends_on?:number[];attachments?:string[]};files?:import('./contracts').Attachment[];key:string}
 
 export function readPending<T>(slot:string):T|undefined {
  if(typeof window==='undefined')return undefined

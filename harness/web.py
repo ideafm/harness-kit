@@ -133,6 +133,14 @@ class WebApplication:
             try:
                 operator = Operator(service)
                 if method == 'GET':
+                    attachment = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)/attachments/([a-f0-9]{64})', parsed.path)
+                    if attachment:
+                        task = service.store.get(int(attachment[1]))
+                        if attachment[2] not in [item['id'] for item in task['data'].get('attachments', [])]:
+                            raise OperatorError('not_found', 'Вложение не найдено', 404)
+                        from .attachments import load
+                        record, content = load(service.store, attachment[2])
+                        return 200, record['mime'], content
                     if parsed.path == '/api/v1/queue':
                         from .queue_control import QueueControl
                         return self.json(200, QueueControl(service).get())
@@ -175,6 +183,12 @@ class WebApplication:
                         return self.json(200, operator.operation(match[1]))
                 elif method == 'POST':
                     payload = json.loads(body)
+                    if parsed.path == '/api/v1/attachments':
+                        from .attachments import upload
+                        try:
+                            return self.json(201, upload(service.store, payload))
+                        except ValueError as error:
+                            raise OperatorError('invalid_attachment', str(error), 422) from None
                     key = headers.get('Idempotency-Key')
                     if parsed.path == '/api/v1/tasks/batch':
                         from .batch_control import BatchControl
@@ -411,7 +425,8 @@ def servers(application):
                     if len(self.headers.get_all(name, [])) > 1:
                         raise ValueError()
                 size = int(self.headers.get('Content-Length', '0'))
-                if not 0 <= size <= 80000 or self.headers.get('Transfer-Encoding'):
+                limit = 3 * 1024 * 1024 if re.fullmatch(r'/api/v1/(?:projects/[a-f0-9]{16}/)?attachments', urlsplit(self.path).path) else 80000
+                if not 0 <= size <= limit or self.headers.get('Transfer-Encoding'):
                     raise ValueError()
             except ValueError:
                 self.send_error(400)

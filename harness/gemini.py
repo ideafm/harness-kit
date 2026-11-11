@@ -416,6 +416,8 @@ class Gemini:
         return command
 
     def call(self, stage, workspace, folder, prompt, interrupted, allowed_files=None, scope=None):
+        if self.config.get('attachment_images'):
+            raise RuntimeError('Для задачи с изображениями выберите Codex: текущий адаптер Gemini поддерживает только текстовые вложения')
         resolved_workspace = validate_workspace(workspace)
         writable = stage == "implement"
         before_digests = None if writable else workspace_snapshot_digests(resolved_workspace)

@@ -1,4 +1,6 @@
 'use client'
+import { AttachmentPicker } from './task-attachments'
+import type { Attachment } from '@/lib/contracts'
 import { useEffect, useRef, useState } from 'react'
 import type { Session, Transport, Task } from '@/lib/contracts'
 import { Button } from '@/components/ui/button'
@@ -54,17 +56,19 @@ export function CreateTaskSheet({
   const [dependencies,setDependencies] = useState(restored?.body.depends_on?.join(', ') ?? '')
   const [manualAcceptance,setManualAcceptance] = useState(restored?.body.manual_acceptance ?? false)
   const [autoStart, setAutoStart] = useState(restored?.body.placement ? restored.body.placement !== 'backlog' : true)
+  const [files,setFiles]=useState<Attachment[]>(restored?.files??[])
+  const [uploading,setUploading]=useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const pending = useRef<PendingCreation | undefined>(restored)
   const lock = useRef(false)
 
   async function submit() {
-    if (lock.current || !session?.csrf_token) return
+    if (lock.current || uploading || !session?.csrf_token) return
     lock.current = true
     setBusy(true)
     setError('')
-    const body: { request: string; approval_mode: string; placement?: string; backend?: string; manual_acceptance?: boolean; depends_on?: number[] } = {
+    const body: { request: string; approval_mode: string; placement?: string; backend?: string; manual_acceptance?: boolean; depends_on?: number[];attachments?:string[] } = {
       request: text,
       approval_mode: mode
     }
@@ -83,6 +87,7 @@ export function CreateTaskSheet({
     if (!autoStart) {
       body.placement = 'backlog'
     }
+    if(files.length)body.attachments=files.map(file=>file.id)
     const signature = JSON.stringify(body)
     if (pending.current && JSON.stringify(pending.current.body) !== signature) {
       setError('Предыдущий запрос имеет неопределённый результат. Верните прежние данные для повтора.')
@@ -92,7 +97,7 @@ export function CreateTaskSheet({
     }
     try {
       if (!pending.current) {
-        const command = { body, key: crypto.randomUUID() }
+        const command = { body, files, key: crypto.randomUUID() }
         writePending(pendingSlot(transport, 'create'), command)
         pending.current = command
       }
@@ -102,6 +107,7 @@ export function CreateTaskSheet({
       }
       clearPending()
       setText('')
+      setFiles([])
       setOpen(false)
       if (active.current) onCreated(created.task.id)
     } catch (e) {
@@ -125,7 +131,7 @@ export function CreateTaskSheet({
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-xs animate-in fade-in-50" />
         <Dialog.Content
-          className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 shadow-2xl animate-in fade-in-50 zoom-in-95 focus:outline-none"
+          className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-xl max-h-[90vh] overflow-y-auto bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 shadow-2xl animate-in fade-in-50 zoom-in-95 focus:outline-none"
           aria-describedby={undefined}
         >
           <Dialog.Close
@@ -171,6 +177,8 @@ export function CreateTaskSheet({
               )}
             </div>
 
+            <AttachmentPicker files={files} onChange={setFiles} onBusy={setUploading} transport={transport} csrf={session?.csrf_token} disabled={busy||!enabled||Boolean(pending.current)}/>
+            {files.some(file=>file.mime.startsWith('image/'))&&(backend==='gemini'||backend==='default'&&defaultBackend==='gemini')&&<p role="alert" className="text-xs text-amber-700">Для задачи с изображениями выберите Codex. Gemini пока поддерживает текстовые вложения.</p>}
             {/* Backend & Approval Mode grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -269,7 +277,7 @@ export function CreateTaskSheet({
               <Button
                 size="sm"
                 className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1.5 cursor-pointer shadow-xs hover:shadow"
-                disabled={busy || !session?.csrf_token || !text.trim() || !withinLimit(text, 51200)}
+                disabled={busy || uploading || files.some(file=>file.mime.startsWith('image/'))&&(backend==='gemini'||backend==='default'&&defaultBackend==='gemini') || !session?.csrf_token || !text.trim() || !withinLimit(text, 51200)}
                 onClick={() => void submit()}
               >
                 <Send className="w-3.5 h-3.5" />

@@ -4,6 +4,8 @@ import type { Task, Control, Transport, Session } from '@/lib/contracts'
 import { AppIcon } from './app-icon'
 import { Badge } from '@/components/ui/badge'
 import { TaskActions } from './task-actions'
+import { TaskAttachments } from './task-attachments'
+import { ExecutionStatus } from './execution-status'
 import { PipelineStepper } from './pipeline-stepper'
 import { TaskTabs } from './task-tabs'
 import { taskStateLabel } from '@/lib/task-presentation'
@@ -224,6 +226,8 @@ export function TaskCard({
       </div>
 
       <section aria-label="Пайплайн задачи">
+        <ExecutionStatus task={task}/>
+        <TaskAttachments files={task.attachments} task={task.id} transport={transport}/>
         <PipelineStepper 
           task={task} 
           onSelectStage={handleSelectStage} 
