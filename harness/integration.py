@@ -115,21 +115,47 @@ def apply_accepted(store, ident):
             changed = git(store.root, 'diff', '--name-only', '-z', before + '...' + result['commit']).split(b'\0')
             if any(protected(name.decode()) for name in changed if name):
                 raise ValueError('Merge затрагивает защищённые пути; требуется отдельное разрешение')
-            atomic_json(store.folder(ident) / 'integration-pending.json',
-                        {'before': before, 'source': result['commit'], 'branch': branch})
             try:
-                git(store.root, '-c', 'commit.gpgsign=false', 'merge', '--no-ff', '-m',
-                    f'Merge TASK-{ident:03}: accepted result', result['commit'])
+                tree = git(store.root, 'merge-tree', '--write-tree', before, result['commit']).decode().strip()
             except subprocess.CalledProcessError as error:
-                if git(store.root, 'diff', '--name-only', '--diff-filter=U').strip():
-                    git(store.root, 'merge', '--abort')
+                raise ValueError('Не удалось подготовить объединённую версию; требуется разбор конфликта или поддержки Git merge-tree') from error
+            from .integration_check import verify_candidate
+            verify_candidate(store, task, before, result['commit'], tree, config)
+            task = store.get(ident)
+            if (task['state'] != 'accepted' or git(store.root, 'rev-parse', 'HEAD').decode().strip() != before
+                    or git(store.root, 'symbolic-ref', '--short', 'HEAD').decode().strip() != branch
+                    or git(store.root, 'status', '--porcelain', '--untracked-files=all', '--', '.',
+                           ':(exclude).harness', ':(exclude).tw-web').strip()):
+                raise ValueError('Основная копия изменилась во время проверок; повторите применение')
+            candidate = git(store.root, '-c', 'commit.gpgsign=false', 'commit-tree', tree,
+                            '-p', before, '-p', result['commit'], '-m',
+                            f'Merge TASK-{ident:03}: accepted result').decode().strip()
+            atomic_json(store.folder(ident) / 'integration-pending.json',
+                        {'before': before, 'source': result['commit'], 'branch': branch, 'candidate': candidate})
+            try:
+                git(store.root, '-c', 'commit.gpgsign=false', 'merge', '--ff-only', candidate)
+            except subprocess.CalledProcessError as error:
                 raise ValueError('Не удалось слить результат. Основная копия сохранена; требуется разбор конфликта') from error
         commit = git(store.root, 'rev-parse', 'HEAD').decode().strip()
+        if not task['data'].get('integration'):
+            checked = task['data'].get('integration_check')
+            current_tree = git(store.root, 'rev-parse', commit + '^{tree}').decode().strip()
+            if not checked or checked.get('tree') != current_tree or checked.get('source_commit') != result['commit']:
+                from .integration_check import verify_candidate
+                verify_candidate(store, task, commit, result['commit'], current_tree, config)
+                task = store.get(ident)
+            if (git(store.root, 'rev-parse', 'HEAD').decode().strip() != commit
+                    or git(store.root, 'symbolic-ref', '--short', 'HEAD').decode().strip() != branch
+                    or git(store.root, 'status', '--porcelain', '--untracked-files=all', '--', '.',
+                           ':(exclude).harness', ':(exclude).tw-web').strip()):
+                raise ValueError('Основная копия изменилась; завершение интеграции остановлено')
         previous = task['data'].get('integration')
         if previous and previous.get('source_commit') == result['commit'] and ancestor(store.root, previous['commit'], commit):
             record = previous
         else:
             record = {'source_commit': result['commit'], 'commit': commit, 'branch': branch}
+            if task['data'].get('integration_check'):
+                record['check'] = task['data']['integration_check']
         if task['data'].get('integration') != record or task['data'].get('integration_error'):
             task['data']['integration'] = record
             task['data'].pop('integration_error', None)

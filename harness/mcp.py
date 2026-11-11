@@ -14,7 +14,22 @@ def tool(name, description, properties=None, required=None, readonly=False):
 
 IDENT = {"type": "integer", "minimum": 1}
 TEXT = {"type": "string", "minLength": 1, "maxLength": 50000}
+GOAL_TASK = {'type': 'object', 'additionalProperties': False, 'required': ['key', 'request', 'depends_on'],
+             'properties': {'key': {'type': 'string', 'minLength': 1, 'maxLength': 80}, 'request': TEXT,
+                            'depends_on': {'type': 'array', 'items': {'type': 'string', 'minLength': 1, 'maxLength': 80},
+                                           'maxItems': 20, 'uniqueItems': True}}}
 TOOLS = [
+    tool('tw_submit_goal', 'Атомарно сохранить большую задачу, связанные подзадачи и итоговую проверку; зависимости по key предыдущих элементов',
+         {'request': TEXT, 'criteria': {'type': 'array', 'items': {'type': 'string', 'minLength': 1, 'maxLength': 2000}, 'minItems': 1, 'maxItems': 50},
+          'tasks': {'type': 'array', 'items': GOAL_TASK, 'minItems': 1, 'maxItems': 20},
+          'request_key': {'type': 'string', 'minLength': 1, 'maxLength': 128}, 'start': {'type': 'boolean'},
+          'approval': {'type': 'string', 'enum': ['auto', 'approve-plan']},
+          'placement': {'type': 'string', 'enum': ['queue', 'backlog']}}, ['request', 'criteria', 'tasks', 'request_key', 'start']),
+    tool('tw_goals', 'Большие задачи и их общие результаты', readonly=True),
+    tool('tw_show_goal', 'Общие критерии, подзадачи, блокировки и итоговая проверка', {'goal': IDENT}, ['goal'], True),
+    tool('tw_recheck_goal', 'Новая итоговая проверка после дефекта или изменения main; depends_on — задачи исправления',
+         {'goal': IDENT, 'request_key': {'type': 'string', 'minLength': 1, 'maxLength': 128}, 'start': {'type': 'boolean'},
+          'depends_on': {'type': 'array', 'items': IDENT, 'maxItems': 80, 'uniqueItems': True}}, ['goal', 'request_key', 'start']),
     tool("tw_status", "Задачи и worker текущего проекта", readonly=True),
     tool("tw_show", "Состояние конкретной задачи", {"task": IDENT}, ["task"], True),
     tool("tw_artifact", "Спецификация, план, сводка, diff, проверки или ревью задачи",
@@ -36,26 +51,35 @@ TOOLS = [
 ]
 
 
+def validate_value(value, rule):
+    kind = rule['type']
+    if kind == 'object':
+        if not isinstance(value, dict) or set(value) - set(rule['properties']) or set(rule['required']) - set(value):
+            raise ValueError('Некорректные аргументы инструмента')
+        for key, item in value.items():
+            validate_value(item, rule['properties'][key])
+    elif kind == 'array':
+        if not isinstance(value, list) or not rule.get('minItems', 0) <= len(value) <= rule['maxItems']:
+            raise ValueError('Некорректный размер списка')
+        for item in value:
+            validate_value(item, rule['items'])
+        if rule.get('uniqueItems') and len({json.dumps(item, sort_keys=True) for item in value}) != len(value):
+            raise ValueError('Элементы списка должны быть уникальными')
+    elif kind == 'integer' and (type(value) is not int or value < rule.get('minimum', 1)):
+        raise ValueError('Нужен положительный номер')
+    elif kind == 'boolean' and type(value) is not bool:
+        raise ValueError('Нужно логическое значение')
+    elif kind == 'string' and (not isinstance(value, str) or not value.strip() or len(value) > rule.get('maxLength', 50000)):
+        raise ValueError('Некорректная строка')
+    if 'enum' in rule and value not in rule['enum']:
+        raise ValueError('Недопустимое значение')
+
+
 def validate(name, arguments):
-    definition = next((t for t in TOOLS if t["name"] == name), None)
+    definition = next((t for t in TOOLS if t['name'] == name), None)
     if definition is None:
-        raise ValueError("Инструмент не разрешён")
-    schema = definition["inputSchema"]
-    if not isinstance(arguments, dict) or set(arguments) - set(schema["properties"]) or set(schema["required"]) - set(arguments):
-        raise ValueError("Некорректные аргументы инструмента")
-    for key, value in arguments.items():
-        rule = schema["properties"][key]
-        kind = rule["type"]
-        if kind == "integer" and (type(value) is not int or value < 1):
-            raise ValueError("Нужен положительный номер задачи")
-        if kind == "boolean" and type(value) is not bool:
-            raise ValueError("Нужно логическое значение start")
-        if kind == "string" and (not isinstance(value, str) or not value.strip() or len(value) > 50000):
-            raise ValueError("Нужна непустая строка до 50000 символов")
-        if "enum" in rule and value not in rule["enum"]:
-            raise ValueError("Недопустимый артефакт")
-        if kind == 'array' and (not isinstance(value, list) or not 1 <= len(value) <= 100 or any(type(item) is not int or item < 1 for item in value) or len(set(value)) != len(value)):
-            raise ValueError('Нужны разные положительные номера задач')
+        raise ValueError('Инструмент не разрешён')
+    validate_value(arguments, definition['inputSchema'])
 
 
 class Server:
@@ -65,6 +89,13 @@ class Server:
 
     def call(self, name, arguments):
         validate(name, arguments)
+        if name == 'tw_submit_goal':
+            return self.service.submit_goal(**arguments)
+        if name == 'tw_recheck_goal':
+            return self.service.recheck_goal(**arguments)
+        if name in {'tw_goals', 'tw_show_goal'}:
+            from .goals import list_goals, show
+            return list_goals(self.service.store) if name == 'tw_goals' else show(self.service.store, arguments['goal'])
         if name == "tw_status":
             return self.service.status()
         if name == "tw_show":

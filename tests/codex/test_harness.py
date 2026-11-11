@@ -73,6 +73,9 @@ class HarnessTests(unittest.TestCase):
         (folder / "check.log").write_text("passed")
         return 0
 
+    def integration_check(self, store, task, workspace, folder, config):
+        return {'exit_code': self.check(workspace, folder), 'command': config['check'], 'scope': '', 'backend': 'codex'}
+
     def run_task(self, backend=None, check=None):
         runner = Runner(self.store, backend=backend or FakeCodex(), check=check or self.check)
         with contextlib.redirect_stdout(io.StringIO()) as output:

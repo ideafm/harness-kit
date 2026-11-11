@@ -17,7 +17,7 @@ def decide(store, ident, action, text, confirmation=None):
         data["attempts"] = {**data["attempts"], "implement": 0, "check": 0, "review": 0}
         data.pop("review_verdict", None)
         data.pop("implementation_summary", None)
-        task["state"], task["stage"] = "queued", "implement"
+        task["state"], task["stage"] = "queued", "check" if data.get('verification_only') else "implement"
     else:
         data["reason"] = text
         task["state"] = "rejected"

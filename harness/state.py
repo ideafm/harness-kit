@@ -40,6 +40,10 @@ class Store:
                 id TEXT PRIMARY KEY, request_key TEXT UNIQUE NOT NULL,
                 payload_hash TEXT NOT NULL, data TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, request_key TEXT UNIQUE NOT NULL,
+                payload_hash TEXT NOT NULL, data TEXT NOT NULL
+            );
         """)
         stat = (self.home / "state.sqlite").stat()
         self.identity = (stat.st_dev, stat.st_ino)

@@ -19,6 +19,9 @@ class AutoApplyTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixtures.HarnessTests()
         self.fixture.setUp()
+        checks = patch('harness.integration_check.run_checks', side_effect=self.fixture.integration_check)
+        checks.start()
+        self.addCleanup(checks.stop)
         self.store = self.fixture.store
         config = json.loads((self.store.home / 'config.json').read_text())
         config['integration_branch'] = git(self.store.root, 'symbolic-ref', '--short', 'HEAD').decode().strip()

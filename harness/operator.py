@@ -62,7 +62,7 @@ class Operator:
             actions.append('delete')
         plan = {'version': data['plan_version'], 'digest': data['plan_version']} if data.get('plan_version') else None
         result = None
-        if data.get('check_receipt') and data.get('changes'):
+        if data.get('check_receipt') and data.get('changes') is not None:
             value = digest({'changes': data['changes'], 'receipt': data['check_receipt']})
             result = {'version': value, 'digest': value}
         question = digest({'question': data.get('question'), 'answers': len(data.get('answers', []))}) if state == 'waiting' else None

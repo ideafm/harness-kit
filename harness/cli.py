@@ -39,6 +39,13 @@ def parser():
     enqueue.add_argument('tasks', nargs='+', type=task_id)
     enqueue.add_argument('--start', action='store_true', help='Также запустить worker')
     sub.add_parser("status", help="Показать задачи и ожидания")
+    sub.add_parser('goals', help='Показать большие задачи')
+    goal_show = sub.add_parser('goal-show', help='Общие критерии и состояние большой задачи')
+    goal_show.add_argument('goal', type=int)
+    goal_submit = sub.add_parser('goal-submit', help='Атомарная постановка большой задачи из JSON-аргумента')
+    goal_submit.add_argument('payload')
+    goal_recheck = sub.add_parser('goal-recheck', help='Новая итоговая проверка после дефекта или изменения main')
+    goal_recheck.add_argument('payload')
     doctor_parser = sub.add_parser("doctor", help="Проверить ограничения на безопасных canary-файлах")
     doctor_parser.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
     runtime_profile = sub.add_parser('profile', help='Профиль просмотра проекта')
@@ -183,6 +190,19 @@ def dispatch_store(args, store):
         result = view_dispatch(args, store)
         if result is not None:
             print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif action in {'goals', 'goal-show', 'goal-submit', 'goal-recheck'}:
+        from .goals import list_goals, show
+        if action in {'goal-submit', 'goal-recheck'}:
+            from .mcp import Server
+            from .service import TaskService
+            service = TaskService(store.root)
+            try:
+                result = Server(service).call('tw_submit_goal' if action == 'goal-submit' else 'tw_recheck_goal', json.loads(args.payload))
+            finally:
+                service.close()
+        else:
+            result = list_goals(store) if action == 'goals' else show(store, args.goal)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     elif action == "add":
         if not args.request.strip():
             raise ValueError("Пустая задача")
@@ -306,6 +326,8 @@ def dispatch_store(args, store):
         elif action == "accept":
             if task["state"] != "review" or args.confirm != label(task):
                 raise ValueError("Нужна задача на приёмке и --confirm TASK-NNN")
+            if data.get('verification_only') and git(store.root, 'rev-parse', 'HEAD^{tree}') != git(store.root, 'rev-parse', data['base'] + '^{tree}'):
+                raise ValueError('Основная версия изменилась после итоговой проверки; нужна новая проверка цели')
             runner = Runner(store)
             previous = data["changes"]
             runner.report(task)

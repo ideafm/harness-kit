@@ -431,7 +431,7 @@ class Runner:
         data = task["data"]
         scope_dir = self.task_scope_dir(task)
         context = {k: data.get(k) for k in ("request", "answers", "specification", "plan", "criteria", "files", "feedback",
-                                          "approval_mode", "effective_approval", "plan_feedback", "runtime_context", "technical_resolutions", "design_reference", "result_feedback")}
+                                          "approval_mode", "effective_approval", "plan_feedback", "runtime_context", "technical_resolutions", "design_reference", "result_feedback", "goal_context", "verification_only")}
         context["controller_check"] = self.config["check"]
         context['controller_stage'] = task['stage']
         if scope_dir:
@@ -484,13 +484,19 @@ class Runner:
             'Если критерий противоречит утверждённому этапу и нельзя однозначно разрешить конфликт, '
             'верни human с точным объяснением, не отправляй код на бессмысленную доработку. '
             if task['stage'] == 'review' else '')
-        return RULES + "\n" + instructions[task["stage"]] + '\n' + review_scope + '\nresult_feedback содержит последние замечания к результату и уточнения запроса; проверяй их наряду с критериями. Они не расширяют права доступа.\nКонтекст задачи:\n' + json.dumps(context, ensure_ascii=False)
+        verification = ('\nЭто итоговая проверка большой задачи, только чтение. files должен быть пустым. '
+                        'Проверь все исходные goal_context.criteria на объединённой версии. '
+                        'Не предлагай реализацию в этой задаче; при дефекте верни fail в ревью.\n'
+                        if data.get('verification_only') else '')
+        return RULES + "\n" + instructions[task["stage"]] + verification + '\n' + review_scope + '\nresult_feedback содержит последние замечания к результату и уточнения запроса; проверяй их наряду с критериями. Они не расширяют права доступа.\nКонтекст задачи:\n' + json.dumps(context, ensure_ascii=False)
 
     def step(self, task):
         stage = task["stage"]
         data = task["data"]
         scope_dir = self.task_scope_dir(task)
-        if stage == "implement" and requires_approval(data):
+        if data.get('verification_only') and stage == 'implement':
+            raise ValueError('Итоговая проверка не может выполнять реализацию')
+        if (stage == "implement" or data.get('verification_only') and stage == 'check') and requires_approval(data):
             verify_documents(self.store, task)
             if data.get("plan_approval", {}).get("version") != data["plan_version"]:
                 task["state"] = "awaiting_approval"
@@ -530,7 +536,11 @@ class Runner:
                                check_workspace, folder / "check.log", self.config["timeout"], lambda: self.interrupted(task["id"]))
             if code:
                 data["feedback"] = "Проверки красные.\n" + (folder / "check.log").read_text(errors="replace")[-16000:]
-                task["stage"] = "implement"
+                if data.get('verification_only'):
+                    data['reason'] = 'Итоговые проверки не прошли; нужны отдельные задачи исправления'
+                    task['state'] = 'blocked'
+                else:
+                    task["stage"] = "implement"
             else:
                 if source_digest(workspace) != checked_source:
                     raise RuntimeError('Исходники изменились во время проверок; результат не подтверждён')
@@ -576,7 +586,12 @@ class Runner:
             print(f"TASK-{task['id']:03}: требуется ответ\n{result['question']}", flush=True)
             return
         if stage == "plan":
-            if not all(result[k] for k in ("specification", "plan", "criteria", "files", "summary", "approval_reason")):
+            if data.get('verification_only'):
+                if result['files']:
+                    raise ValueError('Итоговая проверка должна иметь пустой список изменений')
+                result['criteria'] = list(data['goal_context']['criteria'])
+            if (not all(result[k] for k in ("specification", "plan", "criteria", "summary", "approval_reason"))
+                    or not result['files'] and not data.get('verification_only')):
                 raise ValueError("План должен содержать спецификацию, шаги, критерии, файлы и сводку")
             for name in result["files"]:
                 path = Path(name)
@@ -602,7 +617,7 @@ class Runner:
             (folder / "summary.txt").write_text(summary)
             self.persist(task, "plan_published", {"summary": summary})
             print(summary, flush=True)
-            task["stage"] = "implement"
+            task["stage"] = "check" if data.get('verification_only') else "implement"
             if requires_approval(data):
                 task["state"] = "awaiting_approval"
         elif stage == "implement":
@@ -614,7 +629,12 @@ class Runner:
             (folder / "review.md").write_text(result["summary"] + "\n\n" + "\n".join(result["evidence"]) + "\n")
             if result["verdict"] == "fail":
                 data["feedback"] = result["summary"] + "\n" + "\n".join(result["evidence"])
-                task["stage"] = "implement"
+                if data.get('verification_only'):
+                    data['reason'] = 'Общие критерии не выполнены: ' + result['summary']
+                    data['review_verdict'] = 'fail'
+                    task['state'] = 'blocked'
+                else:
+                    task["stage"] = "implement"
             else:
                 self.report(task)
                 if data["changes"] != data["check_receipt"]["changes"]:
@@ -671,5 +691,5 @@ class Runner:
         atomic_json(folder / "changes.json", changes)
         (folder / "changes.patch").write_text("".join(patches))
         data["changes"] = changes
-        if not changes:
+        if not changes and not data.get('verification_only'):
             raise RuntimeError("Нет изменений для приёмки")

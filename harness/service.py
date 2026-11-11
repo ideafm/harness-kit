@@ -51,6 +51,9 @@ class TaskService:
         result['stage_timings'] = stage_timings(task, self.store.events(task['id']))
         result['depends_on'] = data.get('depends_on', [])
         result['dependency_wait'] = self.store.dependency_wait(task)
+        if data.get('goal_id'):
+            result['goal_id'] = data['goal_id']
+            result['verification_only'] = data.get('verification_only', False)
         result['observation'] = descriptor(self.root, task['id'])
         for key in ("request", "question", "question_kind", "reason", "retry_at", "implementation_summary", "review_verdict",
                     "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order", "backend", "stage_backends", "model", "stage_models", "path_scope", "accepted_by", "manual_acceptance", "auto_apply_error"):
@@ -181,6 +184,37 @@ class TaskService:
         if start:
             self.start(tasks[0]['id'])
         return {'tasks': [self.show(task['id']) for task in tasks], 'worker': self.worker_status()}
+
+    def submit_goal(self, request, criteria, tasks, request_key, start=False, approval='auto', placement='queue'):
+        from .goals import submit
+        if type(start) is not bool:
+            raise ValueError('start должен быть логическим значением')
+        goal = submit(self.store, request, criteria, tasks, request_key, approval, placement)
+        result = {'goal': goal}
+        if start and placement == 'queue':
+            candidate = next((task for task in goal['tasks'] if task['state'] == 'queued'), None)
+            if candidate:
+                try:
+                    self.start(candidate['id'])
+                except (OSError, RuntimeError, ValueError) as error:
+                    result['worker_error'] = str(error)
+        result['worker'] = self.worker_status()
+        return result
+
+    def recheck_goal(self, goal, request_key, start=False, depends_on=None):
+        from .goals import recheck
+        if type(start) is not bool:
+            raise ValueError('start должен быть логическим значением')
+        result = {'goal': recheck(self.store, goal, request_key, depends_on)}
+        if start:
+            task = self.store.get(result['goal']['verification_task'])
+            if task['state'] == 'queued':
+                try:
+                    self.start(task['id'])
+                except (OSError, RuntimeError, ValueError) as error:
+                    result['worker_error'] = str(error)
+        result['worker'] = self.worker_status()
+        return result
 
     def operate(self, action, ident, text=None):
         if action not in {"pause", "resume", "answer"}:
