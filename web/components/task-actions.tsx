@@ -153,7 +153,8 @@ export function TaskActions({
 
         {allowed.includes('delete') && (
           <details><summary className="text-xs cursor-pointer">Другие действия</summary>
-            <Button variant="outline" disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => setDeleteOpen(true)}>Удалить задачу</Button>
+            <Button variant="outline" aria-describedby={`delete-help-${control.task.id}`} disabled={commandsDisabled || busy || Boolean(pending.current) || !session?.csrf_token} onClick={() => setDeleteOpen(true)}>Удалить задачу</Button>
+            <p id={`delete-help-${control.task.id}`} className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">Переместить задачу в «Удалённые». История и файлы сохранятся, задачу можно будет восстановить.</p>
             <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
               <AlertDialogContent>
                 <AlertDialogTitle>Удалить задачу TASK-{String(control.task.id).padStart(3, '0')}?</AlertDialogTitle>

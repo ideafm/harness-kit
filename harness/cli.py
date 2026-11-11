@@ -39,6 +39,11 @@ def parser():
     enqueue.add_argument('tasks', nargs='+', type=task_id)
     enqueue.add_argument('--start', action='store_true', help='Также запустить worker')
     sub.add_parser("status", help="Показать задачи и ожидания")
+    configure = sub.add_parser('configure', help='Показать или сохранить команды проверок и запуска проекта')
+    configure.add_argument('--check', help='Команда проверок без shell-операторов')
+    run_group = configure.add_mutually_exclusive_group()
+    run_group.add_argument('--run', help='Сохранить команду запуска; runtime-исполнение пока не подключено')
+    run_group.add_argument('--clear-run', action='store_true')
     sub.add_parser('goals', help='Показать большие задачи')
     goal_show = sub.add_parser('goal-show', help='Общие критерии и состояние большой задачи')
     goal_show.add_argument('goal', type=int)
@@ -190,6 +195,12 @@ def dispatch_store(args, store):
         result = view_dispatch(args, store)
         if result is not None:
             print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif action == 'configure':
+        from .project_commands import configure
+        result = configure(store, args.check, args.run, args.clear_run)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if result['run']:
+            print('Команда запуска сохранена. Автоматический запуск runtime ещё не подключён; эта команда сейчас не исполняется.')
     elif action in {'goals', 'goal-show', 'goal-submit', 'goal-recheck'}:
         from .goals import list_goals, show
         if action in {'goal-submit', 'goal-recheck'}:

@@ -20,6 +20,10 @@ BLOCK += "When the controller supplies stage context, execute that stage directl
 
 
 def inferred_check(root):
+    from .project_commands import inferred_npm_check
+    npm = inferred_npm_check(root)
+    if npm:
+        return npm
     tests = root / "tests"
     if tests.is_dir() and any(tests.glob("test*.py")):
         return shlex.join([str(Path(sys.executable).resolve()), "-m", "unittest", "discover", "-s", "tests", "-v"])
@@ -76,7 +80,7 @@ def connect(root, check=None, model=None, backend=None):
             arguments += ["--model", model]
         harness_main(arguments)
     elif check or model:
-        raise ValueError("Проект уже подключён; повторный init не меняет check/model")
+        raise ValueError("Проект уже подключён; повторный init не меняет check/model. Для проверок используйте tw configure --check 'команда'")
     elif backend:
         current = json.loads(config.read_text())
         current["backend"] = backend
@@ -274,6 +278,8 @@ def main(argv=None):
               "  tw view TASK-NNN --mode working|checked\n"
               "  tw view status / stop        Постоянный просмотр проекта\n"
               "  tw init [--check 'команда'] [--backend codex|gemini]\n"
+              "  tw configure --check 'npm test' --run 'npm run dev'\n"
+              "                                Сохранить команды; запуск runtime пока не подключён\n"
               "  tw [--backend codex|gemini]  Открыть защищённую сессию Tw\n"
               "  tw status / show TASK-NNN      Посмотреть задачи\n"
               "  tw add 'задача'                Поставить в очередь\n"
