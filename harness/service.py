@@ -125,8 +125,27 @@ class TaskService:
         except (FileNotFoundError, ProcessLookupError):
             return {"running": locked, "managed_elsewhere": locked}
         if locked or time.time() - data["started"] < 10:
-            return {"running": True, "pid": data["pid"], "starting": not locked}
+            from .worker_version import revision
+            return {"running": True, "pid": data["pid"], "starting": not locked, 'stale': data.get('revision') != revision()}
         return {"running": False}
+
+    def refresh_worker(self):
+        status = self.worker_status()
+        if not status.get('running') or not status.get('stale'):
+            return status
+        if any(task['state'] == 'running' for task in self.store.tasks()):
+            (self.store.home / 'worker.stop').write_text('reload after current task\n')
+            raise RuntimeError('Worker использует прежнюю версию контроллера. Дождитесь завершения активной задачи и повторите запуск')
+        with lock(self.store):
+            (self.store.home / 'worker.stop').write_text('reload controller\n')
+            deadline = time.monotonic() + 12
+            while time.monotonic() < deadline:
+                try:
+                    with lock(self.store, 'worker.lock'):
+                        return {'running': False}
+                except RuntimeError:
+                    time.sleep(.1)
+        raise RuntimeError('Устаревший worker не подтвердил остановку; новый процесс не запущен')
 
     def start(self, ident):
         task = self.store.get(ident)
@@ -141,8 +160,8 @@ class TaskService:
                 for stage_backend in mapping.values():
                     validate_backend(stage_backend)
         with lock(self.store, "worker-launch.lock"):
+            status = self.refresh_worker()
             (self.store.home / "worker.stop").unlink(missing_ok=True)
-            status = self.worker_status()
             if not status["running"]:
                 try:
                     with lock(self.store, "worker.lock"):
@@ -153,7 +172,8 @@ class TaskService:
                     process = subprocess.Popen([str(Path(sys.executable).resolve()), str(KIT / "bin/harness"),
                         "--project", str(self.root), "worker"], cwd=self.root, env=safe_env(),
                         stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
-                atomic_json(self.store.home / "worker.json", {"pid": process.pid, "started": time.time()})
+                from .worker_version import revision
+                atomic_json(self.store.home / "worker.json", {"pid": process.pid, "started": time.time(), 'revision': revision()})
                 status = {"running": True, "pid": process.pid}
         return {"task": self.show(ident), "worker": status}
 

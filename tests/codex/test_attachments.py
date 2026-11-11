@@ -116,3 +116,29 @@ class AttachmentTests(unittest.TestCase):
         self.assertIn('User design requirements', prompt)
         self.assertIn('недоверенные материалы', prompt)
         self.assertEqual([item['path'] for item in task['data']['changes']], ['app.py'])
+
+    def test_codex_command_attaches_native_image(self):
+        from harness.runner import Codex
+        record = self.upload('screen.png', b'\x89PNG\r\n\x1a\nfixture')
+        task = self.store.get(1)
+        task['data']['attachments'] = [record]
+        paths = images(self.store, task)
+        folder = self.store.folder(1)
+        config = json.loads((self.store.home / 'config.json').read_text())
+        adapter = Codex({**config, 'attachment_images': paths})
+        def execute(command, workspace, log, timeout, interrupted, prompt):
+            self.assertEqual(command[command.index('--image') + 1], paths[0])
+            (folder / 'plan.response.json').write_text(json.dumps(fixtures.response()))
+            return 0
+        with patch('harness.runner.execute', side_effect=execute):
+            adapter.call('plan', self.store.root, folder, 'test prompt', lambda: False)
+
+    def test_stale_worker_cannot_interrupt_active_task(self):
+        task = self.store.get(1)
+        task['state'] = 'running'
+        self.store.save(task, 'fixture')
+        with patch.object(self.service, 'worker_status', return_value={'running': True, 'stale': True}):
+            with self.assertRaisesRegex(RuntimeError, 'Дождитесь завершения'):
+                self.service.refresh_worker()
+        self.assertTrue((self.store.home / 'worker.stop').exists())
+        self.assertEqual(self.store.get(1)['state'], 'running')

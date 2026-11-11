@@ -266,16 +266,21 @@ def dispatch_store(args, store):
         prepare(store, args.task, args.from_task)
         print('Основа подготовлена; приёмка и применение не выполнялись. Для продолжения используйте answer/resume.')
     elif action == "worker":
+        from .worker_version import LOADED_REVISION, revision as worker_revision
         runner = Runner(store, backend_name=getattr(args, "backend", None))
         with lock(store, "worker.lock"):
             from .auto_apply import recover
             if not (store.home / "worker.stop").exists():
                 recover(store)
             while True:
+                if worker_revision() != LOADED_REVISION:
+                    break
                 if (store.home / "worker.stop").exists():
                     break
                 seen = set()
                 while True:
+                    if worker_revision() != LOADED_REVISION:
+                        break
                     if (store.home / "worker.stop").exists():
                         break
                     task = next((task for task in store.runnable() if task['id'] not in seen), None)
