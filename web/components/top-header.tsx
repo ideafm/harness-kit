@@ -9,7 +9,8 @@ import {
   Plus, 
   Check,
   GitBranch,
-  PanelLeft
+  PanelLeft,
+  Settings
 } from 'lucide-react'
 import type { Task, Projects, Status } from '@/lib/contracts'
 
@@ -27,6 +28,7 @@ interface TopHeaderProps {
   isTerminalOpen?: boolean
   onOpenCommandPalette?: () => void
   onToggleSidebar?: () => void
+  onOpenSettings?: () => void
 }
 
 export function TopHeader({
@@ -42,7 +44,8 @@ export function TopHeader({
   onToggleTerminal,
   isTerminalOpen = false,
   onOpenCommandPalette,
-  onToggleSidebar
+  onToggleSidebar,
+  onOpenSettings
 }: TopHeaderProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -138,6 +141,18 @@ export function TopHeader({
             )}
           </div>
 
+          {onOpenSettings && (
+            <button
+              type="button"
+              aria-label="Настройки проекта"
+              title="Настройки проекта"
+              onClick={onOpenSettings}
+              className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer shrink-0"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           {selectedTask && (
             <>
               <ChevronRight className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
@@ -173,6 +188,19 @@ export function TopHeader({
 
       {/* Right Action Bar */}
       <div className="top-actions flex items-center gap-2 shrink-0 flex-nowrap">
+        {/* Auto Apply Status Badge */}
+        {status?.auto_apply && onOpenSettings && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer text-zinc-600 dark:text-zinc-300 shadow-2xs"
+            title="Настройки автоматического применения результатов"
+          >
+            <span className={`w-2 h-2 rounded-full ${status.auto_apply.enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`} />
+            <span className="text-[11px]">Автоприменение: {status.auto_apply.enabled ? 'вкл' : 'выкл'}</span>
+          </button>
+        )}
+
         {/* Worker Badge */}
         <div 
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${

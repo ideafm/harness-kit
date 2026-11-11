@@ -6,6 +6,7 @@ import { useTaskData } from '@/hooks/use-task-data'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ProjectSidebar } from './project-sidebar'
 import { AutoApplySetting } from './auto-apply-setting'
+import { ProjectSettingsDialog } from './project-settings-dialog'
 import { BatchActions } from './batch-actions'
 import { TaskCard } from './task-card'
 import { CreateTaskSheet } from './create-task-sheet'
@@ -45,6 +46,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
   const [isTerminalOpen, setIsTerminalOpen] = useState(false)
   const [isNewTaskOpen, setIsNewTaskOpen] = useState(false)
   const [collapsedSidebar, setCollapsedSidebar] = useState(false)
+  const [isProjectSettingsOpen, setIsProjectSettingsOpen] = useState(false)
 
   // Global keyboard shortcuts: ⌘K and Ctrl+`
   useEffect(() => {
@@ -122,6 +124,10 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
         selected={data.projectId}
         onSelect={data.selectProject}
         onRemove={data.removeProject}
+        policy={data.status?.auto_apply}
+        session={data.session}
+        commandsDisabled={data.commandsDisabled}
+        onRefresh={() => void data.refresh()}
         onOpenWorkerModal={() => setIsTerminalOpen(true)}
         collapsed={collapsedSidebar}
         onToggleCollapse={() => setCollapsedSidebar(prev => !prev)}
@@ -144,6 +150,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
           onToggleTerminal={() => setIsTerminalOpen(prev => !prev)}
           isTerminalOpen={isTerminalOpen}
           onToggleSidebar={() => setCollapsedSidebar(prev => !prev)}
+          onOpenSettings={() => setIsProjectSettingsOpen(true)}
         />
 
       {/* 2. Page Banner Title matching reference */}
@@ -184,7 +191,18 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
         </div>
       </div>
 
-      <AutoApplySetting policy={data.status?.auto_apply} project={data.projectId} session={data.session} disabled={data.commandsDisabled} onRefresh={()=>void data.refresh()}/>
+      <ProjectSettingsDialog
+        open={isProjectSettingsOpen}
+        onOpenChange={setIsProjectSettingsOpen}
+        project={data.projects?.items.find(p => p.id === data.projectId) || (data.projectId ? { id: data.projectId, name: projectName } : null)}
+        policy={data.status?.auto_apply}
+        session={data.session}
+        disabled={data.commandsDisabled}
+        onRefresh={() => void data.refresh()}
+        onRemove={data.removeProject}
+        canRemove={Boolean(data.projects?.can_remove)}
+        tasksCount={activeTasks.length}
+      />
       {data.error && (
         <div role="alert" className="mx-6 mt-4 p-3.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs shrink-0">
           {data.error}. Последние полученные данные могут быть устаревшими.

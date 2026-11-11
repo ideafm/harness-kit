@@ -54,14 +54,14 @@ def dispatch(app, method, parsed, headers, body):
             app.pending[token] = {'kind': 'policy', 'project': project_id(root), 'revision': current['revision'], 'expires': time.time() + 600}
         checked = ' checked' if current['enabled'] else ''
         content = ('<form method="post" action="/policy/embed"><input type="hidden" name="token" value="' + html.escape(token) + '">'
-            '<label><input type="checkbox" name="enabled" value="true"' + checked + '> Автоматически применять результаты</label>'
+            '<label><input type="checkbox" name="enabled" value="true"' + checked + '> <span>Автоматически применять результаты</span></label>'
             '<p>После успешных проверок и независимого ревью. Только небольшие изменения низкого риска. '
             'Изменяет основную версию проекта. Разрешение действует только для новых запусков; готовые результаты ждут вашей приёмки. '
             'Код контроллера, настройки и обновления библиотек остаются на ручной приёмке. Утверждение плана настраивается отдельно в задаче.</p>'
             '<button type="submit">Подтвердить настройку</button></form>')
         if method == 'POST':
             message = json.dumps({'type': 'tw:policy', 'project': ident})
-            content += f'<p>Настройка сохранена.</p><script>parent.postMessage({message},"http://127.0.0.1:{PORT}")</script>'
+            content += f'<p style="color:#16a34a;font-weight:500;margin-top:6px">✓ Настройка сохранена.</p><script>parent.postMessage({message},"http://127.0.0.1:{PORT}")</script>'
         return app.page('Применение результатов', content, embedded=True)
     finally:
         service.close()

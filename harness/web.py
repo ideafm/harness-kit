@@ -378,7 +378,17 @@ class WebApplication:
         text = '<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         text += '<title>Tw — подтверждение</title><style>body{font:16px system-ui;background:#f5f6fa;color:#172033;margin:0;padding:6vh 20px}main{max-width:620px;margin:auto;background:white;padding:32px;border:1px solid #dfe3ed;border-radius:16px}h1{font-size:24px}p{line-height:1.6;white-space:pre-wrap}code{word-break:break-all;font-size:12px}label{display:block;margin:24px 0}input,textarea{display:block;width:100%;box-sizing:border-box;padding:12px;margin-top:8px;border:1px solid #ccd3df;border-radius:8px;font:inherit}textarea{min-height:130px}button{background:#4338ca;color:white;border:0;border-radius:8px;padding:12px 18px;font:inherit;cursor:pointer}a{display:block;margin-top:24px;color:#4338ca}</style>'
         if embedded:
-            text += '<style>body{padding:0;background:transparent;font-size:13px}main{max-width:none;border:0;border-radius:0;padding:4px;background:transparent}p{margin:0 0 8px}.context{font-size:11px;color:#6b7280}label{margin:8px 0}textarea{min-height:80px}button{background:#466d91;padding:9px 14px;font-size:12px}</style>'
+            text += ('<style>body{padding:0;background:transparent;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:12px;color:#18181b}'
+                     'main{max-width:none;border:0;border-radius:0;padding:0;background:transparent}'
+                     'p{margin:0 0 10px;font-size:11px;line-height:1.55;color:#71717a}'
+                     '.context{font-size:10px;color:#a1a1aa}'
+                     'label{margin:0 0 6px;display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#18181b;cursor:pointer}'
+                     'input[type="checkbox"],input[type="radio"]{display:inline-block;width:15px;height:15px;padding:0;margin:0;flex-shrink:0;accent-color:#2563eb;cursor:pointer}'
+                     'textarea{min-height:80px;border-radius:6px;padding:8px;font-size:12px}'
+                     'button{background:#2563eb;color:#ffffff;border:0;border-radius:6px;padding:6px 14px;font-size:11.5px;font-weight:500;cursor:pointer;transition:background .15s ease}'
+                     'button:hover{background:#1d4ed8}'
+                     '@media (prefers-color-scheme: dark){body{color:#e4e4e7}p{color:#a1a1aa}label{color:#f4f4f5}input,textarea{background:#18181b;border-color:#27272a;color:#f4f4f5}}'
+                     '</style>')
             text += '<main>' + content + '</main><script>new ResizeObserver(()=>parent.postMessage({type:"tw:widget-size",height:document.querySelector("main").getBoundingClientRect().height},'
             text += f'"http://127.0.0.1:{PORT}")).observe(document.querySelector("main"));</script></html>'
         else:
