@@ -332,6 +332,49 @@ class ProjectViewTests(unittest.TestCase):
         self.assertEqual(self.view.dispatch('POST', path, self.headers)[0], 403)
         self.assertIsNone(preview_descriptor(self.store.root, 1))
 
+    def test_project_level_view_api_get_and_post(self):
+        self.view.select(1, 'checked')
+        self.view.refresh()
+        app = WebApplication(self.store.root, 'test', self.view.preview.app.assets,
+            self.view.preview.app.receipt)
+        headers = {'Host': f'127.0.0.1:{PORT}'}
+        path = '/api/v1/view'
+        status, _, body = app.dispatch('GET', path, headers)
+        self.assertEqual(status, 200)
+        data = json.loads(body)['data']
+        self.assertEqual(data['task_id'], 1)
+        self.assertTrue(data['available'])
+        self.assertIn('select', data['actions'])
+        self.assertIn('stop', data['actions'])
+        revision = data['revision']
+        self.assertIsNotNone(revision)
+
+        # Stop at project level
+        payload = json.dumps({'action': 'stop', 'mode': 'checked'}).encode()
+        post_headers = dict(headers, Origin=f'http://127.0.0.1:{PORT}', **{
+            'X-CSRF-Token': app.csrf,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': 'proj-stop-key-1',
+            'If-Match': revision
+        })
+        with patch.object(ProjectView, 'stop') as stop_mock:
+            status, _, stop_body = app.dispatch('POST', path, post_headers, payload)
+            self.assertEqual(status, 200)
+            stop_mock.assert_called_once()
+
+        # Start/select at project level
+        select_payload = json.dumps({'action': 'select', 'mode': 'checked'}).encode()
+        status, _, get_body = app.dispatch('GET', path, headers)
+        new_rev = json.loads(get_body)['data']['revision']
+        post_headers.update({
+            'Idempotency-Key': 'proj-select-key-1',
+            'If-Match': new_rev
+        })
+        with patch.object(ProjectView, 'start', return_value={'running': True}):
+            status, _, select_body = app.dispatch('POST', path, post_headers, select_payload)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(select_body)['data']['status'], 'succeeded')
+
     def test_unknown_adapter_missing_proof_and_symlink_fail_closed(self):
         with self.assertRaises(ValueError):
             configure(self.store, 'container')

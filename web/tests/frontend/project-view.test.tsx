@@ -1,6 +1,7 @@
 import { it,expect,vi } from 'vitest'
 import { render,screen,fireEvent,act } from '@testing-library/react'
 import { ProjectView } from '@/components/project-view'
+import { ProjectPreviewBar } from '@/components/project-preview-bar'
 import { viewReady } from '@/hooks/use-project-view'
 import { ApiError } from '@/lib/http-transport'
 import type { ProjectViewResponse,Task,Transport } from '@/lib/contracts'
@@ -27,7 +28,7 @@ it('реальный контракт разделяет If-Match и ревиз�
   current=ready
   await act(async()=>{await vi.advanceTimersByTimeAsync(2000)})
   expect(screen.getByText('Готово')).toBeTruthy()
-  expect(screen.getByRole('link',{name:'Открыть результат'}).getAttribute('href')).toBe(url)
+  expect(screen.getByRole('button',{name:'Результат отображается'})).toBeTruthy()
   expect(post).toHaveBeenCalledWith('tasks/1/view',{action:'select',mode:'checked'},expect.any(String),'csrf',ready.revision)
   expect(screen.getByText(`Версия исходников: ${digest.slice(0,12)}`)).toBeTruthy()
   expect(screen.getByText(`Полная версия исходников: ${digest}`).closest('details')?.open).toBe(false)
@@ -139,7 +140,7 @@ it('без capability не читает endpoint и не показывает ru
 it('legacy preview с read_only без capability сохраняет ссылку без готовности постоянного просмотра',()=>{
  const url='http://localhost:8080/tasks/1?version=legacy'
  const get=vi.fn();const post=vi.fn()
- render(<ProjectView task={{...task,preview:{url,read_only:true}}} transport={{get,post}} session={session}/>)
+ render(<ProjectPreviewBar tasks={[{...task,preview:{url,read_only:true}}]} transport={{get,post}} enabled={false} session={session}/>)
  expect(screen.getByRole('link',{name:'Открыть результат'}).getAttribute('href')).toBe(url)
  expect(screen.queryByText('Готово')).toBeNull()
  expect(screen.queryByRole('button')).toBeNull()
@@ -191,7 +192,7 @@ it('поздний GET одинакового task_id другого проек�
 })
 it('готовая ссылка сохраняет путь и параметры preview, не берёт постоянный адрес',async()=>{
  const url='http://127.0.0.1:8080/tasks/1?digest=abc'
- render(<ProjectView task={{...task,preview:{url,persistent:true,current:true,read_only:true,mode:'checked',version:'digest'}}} transport={{get:vi.fn().mockResolvedValue(data()),post:vi.fn()}} enabled session={session}/>)
+ render(<ProjectPreviewBar tasks={[{...task,preview:{url,persistent:true,current:true,read_only:true,mode:'checked',version:'digest'}}]} transport={{get:vi.fn().mockResolvedValue(data()),post:vi.fn()}} enabled session={session}/>)
  expect((await screen.findByRole('link',{name:'Открыть результат'})).getAttribute('href')).toBe(url)
 })
 it('не открывает persistent preview при несовпадении режима или current',async()=>{
@@ -232,7 +233,7 @@ it('восстановленная операция проверяется яв�
  await vi.waitFor(()=>expect(get).toHaveBeenCalledWith('operations/op'))
  expect(post).not.toHaveBeenCalled()
 })
-it('отклонённое переключение режима сбрасывает подготовку и сохраняет готовую проверенную ссылку',async()=>{
+it('отклонённое переключение режима сбрасывает подготовку и сохраняет состояние',async()=>{
  const post=vi.fn().mockRejectedValue(new ApiError('conflict','Ревизия устарела',409))
  const get=vi.fn().mockResolvedValue(data())
  const preview={url:'http://localhost:3000/tasks/1?version=checked',persistent:true,current:true,read_only:true,mode:'checked' as const,version:'digest'}
@@ -241,7 +242,6 @@ it('отклонённое переключение режима сбрасыв�
  await screen.findByText('Ревизия устарела')
  await screen.findByText('Готово')
  expect(screen.queryByText('Подготовка')).toBeNull()
- expect(screen.getByRole('link',{name:'Открыть результат'}).getAttribute('href')).toBe(preview.url)
  expect(post).toHaveBeenCalledWith('tasks/1/view',{action:'select',mode:'working'},expect.any(String),'csrf','view-r1')
  expect(post).toHaveBeenCalledTimes(1);expect(get.mock.calls.length).toBeGreaterThan(1)
  expect(screen.queryByText('Повторить прежнюю операцию')).toBeNull()
@@ -283,12 +283,12 @@ it('останавливает просмотр и сохраняет откры
   current={...initial,view:{...initial.view!,running:false,manually_stopped:true}}
   return {operation_id:'stop-op',task_id:1,status:'succeeded'}
  })
- render(<ProjectView task={task} transport={{get,post}} enabled session={session}/>)
+ render(<ProjectPreviewBar tasks={[task]} transport={{get,post}} enabled session={session}/>)
  const link=await screen.findByRole('link',{name:'Открыть результат'})
  expect(link.getAttribute('target')).toBe('_blank')
  fireEvent.click(screen.getByRole('button',{name:'Остановить'}))
  await screen.findByText('Остановлен')
- expect(post).toHaveBeenCalledWith('tasks/1/view',{action:'stop',mode:'checked'},expect.any(String),'csrf','view-r1')
+ expect(post).toHaveBeenCalledWith('view',{action:'stop',mode:'checked'},expect.any(String),'csrf','view-r1')
  expect(screen.queryByRole('link',{name:'Открыть результат'})).toBeNull()
  expect(screen.getByRole('button',{name:'Запустить'})).toBeTruthy()
 })

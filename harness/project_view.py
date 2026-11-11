@@ -165,10 +165,11 @@ class ProjectView:
             self.write('selection.json', selection)
             return selection
 
-    def control_revision(self, ident):
+    def control_revision(self, ident=None):
         service = TaskService(self.root)
         try:
-            value = [service.store.get(ident), profile(service.store), self.selection(), self.lifecycle()]
+            task = service.store.get(ident) if ident is not None else None
+            value = [task, profile(service.store), self.selection(), self.lifecycle()]
         finally:
             service.close()
         return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()

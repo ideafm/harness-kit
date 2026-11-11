@@ -136,6 +136,9 @@ class WebApplication:
                     if parsed.path == '/api/v1/queue':
                         from .queue_control import QueueControl
                         return self.json(200, QueueControl(service).get())
+                    if parsed.path == '/api/v1/view':
+                        from .view_control import ViewControl
+                        return self.json(200, ViewControl(service).get_project())
                     match = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)/view', parsed.path)
                     if match:
                         from .view_control import ViewControl
@@ -179,6 +182,10 @@ class WebApplication:
                     if parsed.path == '/api/v1/queue':
                         from .queue_control import QueueControl
                         return self.json(200, QueueControl(service).perform(payload, key, headers.get('If-Match')))
+                    if parsed.path == '/api/v1/view':
+                        from .view_control import ViewControl
+                        result = ViewControl(service).perform_project(payload, key, headers.get('If-Match'))
+                        return self.json(200, result)
                     match = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)/view', parsed.path)
                     if match:
                         from .view_control import ViewControl

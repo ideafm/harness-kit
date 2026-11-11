@@ -11,6 +11,7 @@ import { BatchActions } from './batch-actions'
 import { TaskCard } from './task-card'
 import { CreateTaskSheet } from './create-task-sheet'
 import { TopHeader } from './top-header'
+import { ProjectPreviewBar } from './project-preview-bar'
 import { CommandPalette } from './command-palette'
 import { InteractiveTerminal } from './interactive-terminal'
 import { taskProgress } from '@/lib/task-presentation'
@@ -151,11 +152,14 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
           isTerminalOpen={isTerminalOpen}
           onToggleSidebar={() => setCollapsedSidebar(prev => !prev)}
           onOpenSettings={() => setIsProjectSettingsOpen(true)}
+          transport={data.transport}
+          session={data.session}
+          enabled={!data.commandsDisabled}
         />
 
       {/* 2. Page Banner Title matching reference */}
-      <div className="px-6 py-4 border-b border-zinc-200/90 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/50 flex flex-wrap items-center justify-between gap-4 shrink-0">
-        <div>
+      <div className="px-6 py-3.5 border-b border-zinc-200/90 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/50 flex flex-wrap items-center justify-between gap-4 shrink-0">
+        <div className="min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
             Работа над проектом
           </h1>
@@ -164,30 +168,41 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled
-            className="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900/60 text-zinc-400 dark:text-zinc-500 text-xs font-mono shadow-2xs flex items-center gap-1.5 cursor-not-allowed opacity-60"
-            title="Интерактивный терминал пока не поддерживается в Harness Kit"
-          >
-            <span className="font-bold opacity-70">&gt;_</span>
-            <span>Терминал воркера</span>
-            <span className="text-[10px] font-sans px-1.5 py-0.2 rounded bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500">
-              скоро
-            </span>
-          </button>
+        <div className="flex flex-wrap items-center gap-3">
+          {data.transport && (
+            <ProjectPreviewBar
+              transport={data.transport}
+              session={data.session}
+              enabled={!data.commandsDisabled}
+              tasks={data.status?.tasks}
+            />
+          )}
 
-          <CreateTaskSheet 
-            key={data.projectId} 
-            transport={data.transport} 
-            session={data.session} 
-            enabled={Boolean(data.capabilities?.actions.some(a => a === 'create' || a === 'create_task'))} 
-            onCreated={select}
-            open={isNewTaskOpen}
-            onOpenChange={setIsNewTaskOpen}
-            defaultBackend={projectBackend}
-          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled
+              className="hidden lg:flex px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-900/60 text-zinc-400 dark:text-zinc-500 text-xs font-mono shadow-2xs items-center gap-1.5 cursor-not-allowed opacity-60"
+              title="Интерактивный терминал пока не поддерживается в Harness Kit"
+            >
+              <span className="font-bold opacity-70">&gt;_</span>
+              <span>Терминал воркера</span>
+              <span className="text-[10px] font-sans px-1.5 py-0.2 rounded bg-zinc-200/60 dark:bg-zinc-800 text-zinc-500">
+                скоро
+              </span>
+            </button>
+
+            <CreateTaskSheet 
+              key={data.projectId} 
+              transport={data.transport} 
+              session={data.session} 
+              enabled={Boolean(data.capabilities?.actions.some(a => a === 'create' || a === 'create_task'))} 
+              onCreated={select}
+              open={isNewTaskOpen}
+              onOpenChange={setIsNewTaskOpen}
+              defaultBackend={projectBackend}
+            />
+          </div>
         </div>
       </div>
 

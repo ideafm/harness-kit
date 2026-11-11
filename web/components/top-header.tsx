@@ -12,7 +12,7 @@ import {
   PanelLeft,
   Settings
 } from 'lucide-react'
-import type { Task, Projects, Status } from '@/lib/contracts'
+import type { Task, Projects, Status, Transport, Session } from '@/lib/contracts'
 
 interface TopHeaderProps {
   projectName: string
@@ -29,6 +29,9 @@ interface TopHeaderProps {
   onOpenCommandPalette?: () => void
   onToggleSidebar?: () => void
   onOpenSettings?: () => void
+  transport?: Transport
+  session?: Session
+  enabled?: boolean
 }
 
 export function TopHeader({
@@ -45,7 +48,10 @@ export function TopHeader({
   isTerminalOpen = false,
   onOpenCommandPalette,
   onToggleSidebar,
-  onOpenSettings
+  onOpenSettings,
+  transport,
+  session,
+  enabled = true
 }: TopHeaderProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -63,9 +69,9 @@ export function TopHeader({
   }, [])
 
   return (
-    <header className="topbar h-13 border-b border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md px-4 flex items-center justify-between shrink-0 z-20 flex-nowrap gap-3">
-      {/* Left: Project Switcher & Task Breadcrumb */}
-      <div className="flex items-center gap-2 min-w-0 shrink-0">
+    <header className="topbar min-h-[52px] h-auto border-b border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md px-3 sm:px-4 py-1.5 sm:py-0 flex flex-wrap lg:flex-nowrap items-center justify-between shrink-0 z-20 gap-2 sm:gap-3">
+      {/* Left: Project Switcher & Preview Bar */}
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-3 min-w-0">
         {onToggleSidebar && (
           <button
             type="button"
@@ -164,7 +170,7 @@ export function TopHeader({
         </nav>
 
         {/* Project Git Branch Pill matching design */}
-        <div className="hidden xl:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] font-mono text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700/60 shrink-0" title="Ветка проекта">
+        <div className="hidden 2xl:flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[11px] font-mono text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700/60 shrink-0" title="Ветка проекта">
           <GitBranch className="w-3 h-3 text-zinc-500" />
           <span>{selectedTask?.integration?.branch || 'main'}</span>
         </div>
