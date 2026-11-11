@@ -274,3 +274,21 @@ it('фоновый GET сохраняет блок, а ошибка обновл
   expect((screen.getByText('Показать рабочую версию') as HTMLButtonElement).disabled).toBe(true)
  }finally{view.unmount();vi.useRealTimers()}
 })
+
+it('останавливает просмотр и сохраняет открытие в отдельной вкладке',async()=>{
+ const initial=data();initial.actions=['select','refresh','stop']
+ let current=initial
+ const get=vi.fn().mockImplementation(async()=>current)
+ const post=vi.fn().mockImplementation(async()=>{
+  current={...initial,view:{...initial.view!,running:false,manually_stopped:true}}
+  return {operation_id:'stop-op',task_id:1,status:'succeeded'}
+ })
+ render(<ProjectView task={task} transport={{get,post}} enabled session={session}/>)
+ const link=await screen.findByRole('link',{name:'Открыть результат'})
+ expect(link.getAttribute('target')).toBe('_blank')
+ fireEvent.click(screen.getByRole('button',{name:'Остановить'}))
+ await screen.findByText('Остановлен')
+ expect(post).toHaveBeenCalledWith('tasks/1/view',{action:'stop',mode:'checked'},expect.any(String),'csrf','view-r1')
+ expect(screen.queryByRole('link',{name:'Открыть результат'})).toBeNull()
+ expect(screen.getByRole('button',{name:'Запустить'})).toBeTruthy()
+})

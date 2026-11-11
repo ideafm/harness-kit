@@ -107,13 +107,18 @@ class WebApplication:
             if method == 'GET' and parsed.path == '/api/v1/session':
                 return self.json(200, {'csrf_token': self.csrf, 'confirmation_origin': f'http://127.0.0.1:{CONFIRM_PORT}'})
             if method == 'GET' and parsed.path == '/api/v1/projects':
-                return self.json(200, {'items': self.projects.listing(), 'default_project_id': project_id(self.root),
+                return self.json(200, {'items': self.projects.listing(), 'default_project_id': next(iter(self.projects.entries()), ''), 'revision': self.projects.revision(), 'can_remove': True,
                     'connect_url': f'http://127.0.0.1:{CONFIRM_PORT}/projects'})
             if method == 'POST':
                 if headers.get('Origin') != origin or headers.get('X-CSRF-Token') != self.csrf:
                     raise OperatorError('csrf', 'Обновите страницу и повторите действие', 403)
                 if headers.get('Content-Type', '').split(';')[0] != 'application/json':
                     raise OperatorError('invalid_content_type', 'Ожидается JSON')
+            removal = re.fullmatch(r'/api/v1/projects/([a-f0-9]{16})/disconnect', parsed.path)
+            if method == 'POST' and removal:
+                if json.loads(body) != {'action': 'disconnect'}:
+                    raise OperatorError('invalid_request', 'Ожидается отключение проекта')
+                return self.json(200, self.projects.remove(removal[1], headers.get('If-Match')))
             root = self.root
             if parsed.path.startswith('/api/v1/projects/'):
                 scoped = re.fullmatch(r'/api/v1/projects/([a-f0-9]{16})/(.+)', parsed.path)

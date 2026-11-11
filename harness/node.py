@@ -17,7 +17,7 @@ from .security import profile, regular_files, read_regular, tree_entries, safe_e
 from .state import atomic_json
 
 
-NODE = Path('/opt/homebrew/Cellar/node/25.9.0_2/bin/node')
+NODE = Path('/opt/homebrew/bin/node').resolve()
 NPM = Path('/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js')
 PACKAGES = ('next', 'react', 'react-dom', 'typescript', 'tailwindcss', '@tailwindcss/postcss', 'postcss',
             'clsx', 'tailwind-merge', 'class-variance-authority', 'lucide-react', 'radix-ui', 'sonner',

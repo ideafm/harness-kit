@@ -8,6 +8,7 @@ import {
   Activity,
   ExternalLink
 } from 'lucide-react'
+import { RemoveProject } from './remove-project'
 import type { Projects } from '@/lib/contracts'
 import { Sidebar, useSidebar } from '@/components/ui/sidebar'
 
@@ -26,6 +27,7 @@ export interface ProjectSidebarProps {
   projects?: Projects
   selected?: string
   onSelect?: (id: string) => void
+  onRemove?: (id: string) => Promise<void>
   backend?: 'gemini' | 'codex'
   onOpenWorkerModal?: () => void
   collapsed?: boolean
@@ -39,6 +41,7 @@ export function ProjectSidebar({
   projects,
   selected,
   onSelect,
+  onRemove,
   onOpenWorkerModal,
   collapsed = false,
   onToggleCollapse
@@ -89,6 +92,7 @@ export function ProjectSidebar({
               <span>{p.name}</span>
             </button>
           ))}
+          {projects?.can_remove&&onRemove&&<RemoveProject projects={items} onRemove={onRemove}/>}
           {!projects?.items?.length && <p className="text-xs text-zinc-500 p-2">{project}</p>}
         </div>
       </Sidebar>
@@ -219,6 +223,7 @@ export function ProjectSidebar({
             )
           })}
 
+          {projects?.can_remove&&onRemove&&<RemoveProject projects={items} onRemove={onRemove}/>}
           {!projects?.items?.length && (
             <p className="muted px-2 py-1 text-xs text-zinc-500">{project}</p>
           )}

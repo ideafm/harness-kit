@@ -65,5 +65,14 @@ def configure(store, check=None, run=None, clear_run=False):
         if changed:
             store.ensure_current()
             atomic_json(path, config)
+        if parsed_run == ['npm', 'run', 'dev']:
+            from .project_view import configure as configure_view
+            configure_view(store, 'npm-dev')
+        if clear_run:
+            runtime = store.home / 'runtime-profile.json'
+            if runtime.is_symlink():
+                raise ValueError('Профиль заменён ссылкой')
+            if runtime.is_file() and json.loads(runtime.read_text()).get('adapter') == 'npm-dev':
+                runtime.unlink()
         return {'check': config['check'], 'run': config.get('run_command'),
-                'run_status': 'configuration_only' if config.get('run_command') else 'not_configured'}
+                'run_status': 'npm-dev' if config.get('run_command') == ['npm', 'run', 'dev'] else 'configuration_only' if config.get('run_command') else 'not_configured'}

@@ -20,7 +20,8 @@ class ProjectViewTests(unittest.TestCase):
         git(self.store.root, 'add', 'index.html')
         git(self.store.root, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'view fixture')
         configure(self.store, 'static')
-        self.fixture.run_task()
+        with patch.object(ProjectView, 'start', return_value={'running': True}):
+            self.fixture.run_task()
         self.view = ProjectView(self.store.root)
         self.headers = {'Host': f'127.0.0.1:{self.view.port}'}
 
@@ -31,6 +32,71 @@ class ProjectViewTests(unittest.TestCase):
         status, _, body = self.view.dispatch('GET', '/', self.headers)
         self.assertEqual(status, 200)
         return body
+
+    def test_manual_stop_survives_restart_and_prevents_automatic_publish(self):
+        from harness.auto_preview import publish
+        self.view.stop()
+        self.assertTrue(ProjectView(self.store.root).status()['manually_stopped'])
+        with patch.object(ProjectView, 'start') as start:
+            publish(self.store, 1)
+            start.assert_not_called()
+        self.assertEqual(self.store.get(1)['state'], 'review')
+
+    def test_failed_automatic_preview_preserves_review_result(self):
+        from harness.auto_preview import publish
+        with patch.object(ProjectView, 'start', side_effect=RuntimeError('port occupied')):
+            publish(self.store, 1)
+        task = self.store.get(1)
+        self.assertEqual(task['state'], 'review')
+        self.assertEqual(task['data']['preview_error'], 'port occupied')
+
+    def test_stop_available_after_workspace_removed(self):
+        task = self.store.get(1)
+        task['data'].pop('workspace', None)
+        self.store.save(task, 'workspace_removed')
+        service = TaskService(self.store.root)
+        self.addCleanup(service.close)
+        operator = ViewControl(service)
+        control = operator.get(1)
+        self.assertFalse(control['available'])
+        self.assertEqual(control['actions'], ['stop'])
+        result = operator.perform(1, {'action': 'stop', 'mode': 'checked'},
+                                  'stop-no-workspace', control['revision'])
+        self.assertEqual(result['status'], 'succeeded')
+
+    def test_interrupted_stop_is_rejected_after_newer_launch(self):
+        service = TaskService(self.store.root)
+        self.addCleanup(service.close)
+        operator = ViewControl(service)
+        revision = operator.get(1)['revision']
+        payload = {'action': 'stop', 'mode': 'checked'}
+        stop = ProjectView.stop
+        def interrupted(view, *args, **kwargs):
+            stop(view, *args, **kwargs)
+            raise KeyboardInterrupt()
+        with patch.object(ProjectView, 'stop', interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                operator.perform(1, payload, 'interrupted-stop-key', revision)
+        self.view.write('lifecycle.json', {'manually_stopped': False, 'revision': 'new-launch'})
+        result = operator.perform(1, payload, 'interrupted-stop-key', revision)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['error']['code'], 'stale_revision')
+        self.assertFalse(self.view.lifecycle()['manually_stopped'])
+
+    def test_replayed_stop_cannot_stop_a_newer_launch(self):
+        service = TaskService(self.store.root)
+        self.addCleanup(service.close)
+        operator = ViewControl(service)
+        revision = operator.get(1)['revision']
+        payload = {'action': 'stop', 'mode': 'checked'}
+        result = operator.perform(1, payload, 'stop-preview-operation', revision)
+        self.assertEqual(result['status'], 'succeeded')
+        self.view.write('lifecycle.json', {'manually_stopped': False, 'revision': 'new-launch'})
+        self.assertEqual(operator.perform(1, payload, 'stop-preview-operation', revision), result)
+        self.assertFalse(self.view.lifecycle()['manually_stopped'])
+        with self.assertRaises(OperatorError):
+            self.view.stop('old-stop', revision, 1)
+        self.assertFalse(self.view.lifecycle()['manually_stopped'])
 
     def test_checked_view_survives_workspace_changes_and_switches_to_working(self):
         self.view.select(1, 'checked')

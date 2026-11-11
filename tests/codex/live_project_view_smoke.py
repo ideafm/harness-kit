@@ -26,6 +26,7 @@ def main():
         git(store.root, 'add', 'index.html')
         git(store.root, '-c', 'user.name=Smoke', '-c', 'user.email=smoke@example.invalid', 'commit', '-qm', 'view fixture')
         configure(store, 'static')
+        view = ProjectView(store.root)
         fixture.run_task()
         first = fixture.task['id']
         fixture.task = store.add('second task')

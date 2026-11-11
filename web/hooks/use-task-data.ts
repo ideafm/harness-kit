@@ -18,7 +18,7 @@ export function useTaskData(base:Transport) {
  const transport=useMemo(()=>projectTransport(base,projectId??''),[base,projectId])
  const refreshProjects=useCallback(async()=>{const version=++listing.current;try{const value=await base.get<Projects>('projects');if(!Array.isArray(value.items)||value.items.some(p=>typeof p.id!=='string'||typeof p.name!=='string')||typeof value.default_project_id!=='string'||typeof value.connect_url!=='string')throw Error('Некорректный список проектов');if(version===listing.current){setProjects(value);setProjectError('')}}catch(e){if(version===listing.current)setProjectError(e instanceof Error?e.message:'Ошибка проектов')}},[base])
  useEffect(()=>{void refreshProjects();const focus=()=>void refreshProjects();const visible=()=>{if(document.visibilityState==='visible')focus()};window.addEventListener('focus',focus);document.addEventListener('visibilitychange',visible);return()=>{listing.current++;window.removeEventListener('focus',focus);document.removeEventListener('visibilitychange',visible)}},[refreshProjects])
- useEffect(()=>{if(choice.project!==null||!projects)return;const project=projects.default_project_id;const url=new URL(window.location.href);url.searchParams.set('project',project);window.history.replaceState(null,'',url);setChoice(old=>({...old,project}))},[projects,choice.project])
+ useEffect(()=>{if(choice.project!==null||!projects?.default_project_id)return;const project=projects.default_project_id;const url=new URL(window.location.href);url.searchParams.set('project',project);window.history.replaceState(null,'',url);setChoice(old=>({...old,project}))},[projects,choice.project])
  const navigate=useCallback((project:string,task?:number)=>{current.current++;setStatus(undefined);setControl(undefined);setCapabilities(undefined);setSession(undefined);setSelected(undefined);setLoading(true);setConnectionReady(false);const url=new URL(window.location.href);url.searchParams.set('project',project);url.searchParams.delete('task');if(task)url.searchParams.set('task',String(task));window.history.pushState(null,'',url);setChoice({project,task,invalidTask:false})},[])
  useEffect(()=>{const pop=()=>{current.current++;setStatus(undefined);setControl(undefined);setCapabilities(undefined);setSession(undefined);setSelected(undefined);setConnectionReady(false);setChoice(locationSelection())};window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop)},[])
  const refresh=useCallback(async(signal?:AbortSignal)=>{
@@ -37,5 +37,19 @@ export function useTaskData(base:Transport) {
  },[transport,projectId,valid,choice])
  useEffect(()=>{const abort=new AbortController();let timer:ReturnType<typeof setTimeout>;let stopped=false;async function poll(){await refresh(abort.signal);if(!stopped)timer=setTimeout(poll,5000)}void poll();return()=>{stopped=true;abort.abort();current.current++;clearTimeout(timer)}},[refresh])
  const visible=valid&&loadedProject===projectId
- return {commandsDisabled:!connectionReady||Boolean(projectError)||!visible,projects,projectId,transport,status:visible?status:undefined,selected:visible?selected:undefined,select:(id:number)=>{if(projectId)navigate(projectId,id)},selectProject:(id:string)=>navigate(id),control:visible?control:undefined,capabilities:visible?capabilities:undefined,session:visible?session:undefined,error:projectError||(!valid&&projects?(projects.items.length?'Неизвестный проект':'Проекты пока не подключены'):error),loading,refresh:async()=>{void refreshProjects();await refresh()}}
+ const removeProject=useCallback(async(id:string)=>{
+  if(!projects?.can_remove||!projects.revision)throw Error('Контроллер не поддерживает удаление проекта')
+  const currentSession=await base.get<Session>('session')
+  if(!currentSession.csrf_token)throw Error('Нет полномочий для удаления проекта')
+  await base.post(`projects/${encodeURIComponent(id)}/disconnect`,{action:'disconnect'},crypto.randomUUID(),currentSession.csrf_token,projects.revision)
+  const value=await base.get<Projects>('projects')
+  setProjects(value)
+  if(choice.project===id||!value.items.some(p=>p.id===projectId)){
+   current.current++;setStatus(undefined);setControl(undefined);setCapabilities(undefined);setSession(undefined);setSelected(undefined);setConnectionReady(false)
+   const project=value.default_project_id||null
+   const url=new URL(window.location.href);url.searchParams.delete('task');url.searchParams.delete('project');if(project)url.searchParams.set('project',project)
+   window.history.replaceState(null,'',url);setChoice({project,task:undefined,invalidTask:false})
+  }
+ },[base,projects,choice.project,projectId])
+ return {removeProject,commandsDisabled:!connectionReady||Boolean(projectError)||!visible,projects,projectId,transport,status:visible?status:undefined,selected:visible?selected:undefined,select:(id:number)=>{if(projectId)navigate(projectId,id)},selectProject:(id:string)=>navigate(id),control:visible?control:undefined,capabilities:visible?capabilities:undefined,session:visible?session:undefined,error:projectError||(!valid&&projects?(projects.items.length?'Неизвестный проект':'Проекты пока не подключены'):error),loading,refresh:async()=>{void refreshProjects();await refresh()}}
 }

@@ -51,6 +51,8 @@ class TaskService:
         result['stage_timings'] = stage_timings(task, self.store.events(task['id']))
         result['depends_on'] = data.get('depends_on', [])
         result['dependency_wait'] = self.store.dependency_wait(task)
+        if data.get('preview_error'):
+            result['preview_error'] = data['preview_error']
         if data.get('goal_id'):
             result['goal_id'] = data['goal_id']
             result['verification_only'] = data.get('verification_only', False)

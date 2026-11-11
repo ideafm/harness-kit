@@ -237,3 +237,14 @@ it('сохраняет черновик и iframe при ошибке refresh, �
  expect(iframe.closest('[inert]')).toBeNull()
  expect((input as HTMLTextAreaElement).value).toBe('Не потерять этот текст')
 })
+
+it('удаляет проект из списка с объяснением сохранения файлов',async()=>{
+ const {RemoveProject}=await import('@/components/remove-project')
+ const remove=vi.fn().mockResolvedValue(undefined)
+ render(<RemoveProject projects={[{id:'a',name:'Альфа'}]} onRemove={remove}/>)
+ fireEvent.click(screen.getByRole('button',{name:'Удалить проект Альфа'}))
+ expect(screen.getByText(/Файлы на диске и история задач сохранятся/)).toBeTruthy()
+ fireEvent.click(screen.getByRole('button',{name:'Удалить из списка'}))
+ await vi.waitFor(()=>expect(remove).toHaveBeenCalledWith('a'))
+ await vi.waitFor(()=>expect(screen.queryByRole('alertdialog')).toBeNull())
+})

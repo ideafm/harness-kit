@@ -7,9 +7,9 @@ export type Session = { csrf_token?:string; confirmation_origin:string }
 export type Operation = { operation_id:string; status:'pending'|'succeeded'|'failed';task_id:number;error?:{message:string} }
 export type Artifact = {task:number;artifact:string;text:string;truncated:boolean}
 export type Events = { items:{id:string;cursor:string;type:string;occurred_at:number;message:string}[];next_cursor:string;has_more:boolean }
-export type Projects = {items:{id:string;name:string;backend?:string}[];default_project_id:string;connect_url:string}
+export type Projects = {revision?:string;can_remove?:boolean;items:{id:string;name:string;backend?:string}[];default_project_id:string;connect_url:string}
 export interface Transport { projectId?:string; get<T>(path:string,signal?:AbortSignal):Promise<T>; post<T>(path:string,body:unknown,key:string,csrf:string,revision?:string):Promise<T> }
 export type ViewMode='checked'|'working'
-export type ProjectView={revision:string|null;url:string|null;running:boolean;requested:{task:number;mode:ViewMode;revision:string|null}|null;active_task:number|null;mode:ViewMode|null;source_digest:string|null;current:boolean;building:boolean;message:string;error?:string|{code?:string;message:string}}
-export type ProjectViewResponse={task_id:number;available:boolean;reason:string|null;revision:string|null;view:ProjectView|null}
+export type ProjectView={revision:string|null;url:string|null;running:boolean;manually_stopped?:boolean;requested:{task:number;mode:ViewMode;revision:string|null}|null;active_task:number|null;mode:ViewMode|null;source_digest:string|null;current:boolean;building:boolean;message:string;error?:string|{code?:string;message:string}}
+export type ProjectViewResponse={task_id:number;available:boolean;reason:string|null;revision:string|null;view:ProjectView|null;actions?:('select'|'refresh'|'stop')[]}
 export type ViewOperation={operation_id:string;task_id:number;status:'succeeded'|'failed'|'pending';view?:ProjectView;error?:{code:string;message:string;retryable:boolean}}

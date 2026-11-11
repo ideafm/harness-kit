@@ -121,6 +121,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
         projects={data.projects}
         selected={data.projectId}
         onSelect={data.selectProject}
+        onRemove={data.removeProject}
         onOpenWorkerModal={() => setIsTerminalOpen(true)}
         collapsed={collapsedSidebar}
         onToggleCollapse={() => setCollapsedSidebar(prev => !prev)}

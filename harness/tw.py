@@ -87,6 +87,20 @@ def connect(root, check=None, model=None, backend=None):
         current.setdefault("agy", "agy")
         current.setdefault("sandbox", "/usr/bin/sandbox-exec")
         atomic_json(config, current)
+    from .project_commands import configure as configure_commands
+    from .npm_dev import manifest as npm_manifest
+    try:
+        npm_manifest(root)
+    except (FileNotFoundError, ValueError):
+        pass
+    else:
+        existing = json.loads(config.read_text())
+        if not existing.get('run_command'):
+            service = TaskService(root)
+            try:
+                configure_commands(service.store, run='npm run dev')
+            finally:
+                service.close()
     if BLOCK.strip() not in content:
         agents.write_text(content.rstrip() + BLOCK)
     for name, data in files.items():
@@ -274,12 +288,12 @@ def main(argv=None):
         print("Tw — Codex/Gemini со скиллом и контроллером задач\n\n"
               "  tw install [--bin-dir PATH]  Установить launcher без изменения shell-конфигов\n"
               "  tw diagnose [--sandbox]      Проверить установку до подключения проекта\n"
-              "  tw profile configure --adapter static|next-ui\n"
+              "  tw profile configure --adapter static|next-ui|npm-dev\n"
               "  tw view TASK-NNN --mode working|checked\n"
               "  tw view status / stop        Постоянный просмотр проекта\n"
               "  tw init [--check 'команда'] [--backend codex|gemini]\n"
               "  tw configure --check 'npm test' --run 'npm run dev'\n"
-              "                                Сохранить команды; запуск runtime пока не подключён\n"
+              "                                Настроить проверки и запуск приложения\n"
               "  tw [--backend codex|gemini]  Открыть защищённую сессию Tw\n"
               "  tw status / show TASK-NNN      Посмотреть задачи\n"
               "  tw add 'задача'                Поставить в очередь\n"
@@ -293,8 +307,18 @@ def main(argv=None):
               "  tw accept TASK-NNN --confirm TASK-NNN\n"
               "  tw request-changes TASK-NNN 'замечания'\n"
               "  tw reject TASK-NNN --reason 'причина' --confirm TASK-NNN\n"
+              "  tw disconnect                 Удалить проект из списка, сохранив файлы\n"
               "  tw stop                       Остановить фоновый worker\n\n"
               "Настройки оболочки и глобальные конфиги не изменяются.")
+        return
+    if command == 'disconnect':
+        from .projects import Projects, project_id
+        disconnect = argparse.ArgumentParser(prog='tw disconnect')
+        disconnect.add_argument('--project', type=Path, default=Path.cwd())
+        args = disconnect.parse_args(arguments[1:])
+        panel = KIT / 'web' if (KIT / 'web/.harness/config.json').is_file() else KIT.parent / 'tw-web'
+        registry = Projects(panel)
+        print(json.dumps(registry.remove(project_id(args.project.resolve()), registry.revision()), ensure_ascii=False))
         return
     if command == "stop":
         if len(arguments) != 1:

@@ -35,15 +35,15 @@ def profile(store):
     if path.is_symlink() or path.with_suffix('.json.tmp').is_symlink():
         raise ValueError('Профиль заменён ссылкой')
     if not path.is_file():
-        raise ValueError('Сначала настройте tw profile configure --adapter static или next-ui')
+        raise ValueError('Сначала настройте tw profile configure --adapter static, next-ui или npm-dev')
     data = json.loads(path.read_text())
-    if data.get('adapter') not in {'static', 'next-ui'} or data.get('version') != 1:
+    if data.get('adapter') not in {'static', 'next-ui', 'npm-dev'} or data.get('version') != 1:
         raise ValueError('Адаптер профиля не поддерживается')
     return data
 
 
 def configure(store, adapter):
-    if adapter not in {'static', 'next-ui'}:
+    if adapter not in {'static', 'next-ui', 'npm-dev'}:
         raise ValueError('Адаптер не поддерживается; unrestricted запуск запрещён')
     config = json.loads((store.home / 'config.json').read_text())
     if adapter == 'next-ui' and config.get('frontend_toolchain') != 'next-ui':
@@ -62,6 +62,9 @@ def capture_checked(store, task):
     if not path.exists():
         return
     settings = profile(store)
+    if settings['adapter'] == 'npm-dev':
+        from .npm_dev import capture
+        return capture(store, task)
     if settings['adapter'] != 'static':
         return
     preview = Preview(store.root, task['id'])
@@ -165,10 +168,17 @@ class ProjectView:
     def control_revision(self, ident):
         service = TaskService(self.root)
         try:
-            value = [service.store.get(ident), profile(service.store), self.selection()]
+            value = [service.store.get(ident), profile(service.store), self.selection(), self.lifecycle()]
         finally:
             service.close()
         return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+    def lifecycle(self):
+        value = self.read('lifecycle.json', {'manually_stopped': False, 'revision': None})
+        if (not isinstance(value, dict) or type(value.get('manually_stopped')) is not bool
+                or value.get('revision') is not None and not isinstance(value['revision'], str)):
+            raise ValueError('Некорректное состояние запуска просмотра')
+        return value
 
     def request(self, record, stop=False):
         if not isinstance(record, dict) or record.get('project_id') != self.ident or record.get('port') != self.port:
@@ -186,15 +196,22 @@ class ProjectView:
         state = self.read('status.json', dict(self.state))
         if state.get('project_id') != self.ident:
             state = dict(self.state)
-        state.update(url=self.url, requested=self.selection(), running=self.running())
+        state.update(url=self.url, requested=self.selection(), running=self.running(),
+                     manually_stopped=self.lifecycle()['manually_stopped'])
         if state['running']:
             server_record = self.read('server.json')
             if server_record and server_record.get('project_id') == self.ident:
                 self.request(server_record)
         return state
 
-    def start(self):
+    def start(self, lifecycle_revision=None, expected_lifecycle=Ellipsis, automatic=False):
         with self.lock('launcher.lock', True):
+            lifecycle = self.lifecycle()
+            if automatic and lifecycle['manually_stopped']:
+                return self.status()
+            if expected_lifecycle is not Ellipsis and lifecycle['revision'] not in {expected_lifecycle, lifecycle_revision}:
+                raise OperatorError('stale_revision', 'Состояние запуска просмотра изменилось', 409)
+            self.write('lifecycle.json', {'manually_stopped': False, 'revision': lifecycle_revision or uuid.uuid4().hex})
             if self.running():
                 self.request(self.read('server.json'))
                 return self.status()
@@ -218,8 +235,13 @@ class ProjectView:
                 time.sleep(.1)
             raise RuntimeError('Просмотр не подтвердил готовность')
 
-    def stop(self):
+    def stop(self, lifecycle_revision=None, expected=None, ident=None):
         with self.lock('launcher.lock', True):
+            lifecycle = self.lifecycle()
+            if (expected is not None and lifecycle['revision'] != lifecycle_revision
+                    and self.control_revision(ident) != expected):
+                raise OperatorError('stale_revision', 'Состояние просмотра изменилось; остановка отменена', 409)
+            self.write('lifecycle.json', {'manually_stopped': True, 'revision': lifecycle_revision or uuid.uuid4().hex})
             if not self.running():
                 return {'stopped': True, 'url': self.url}
             record = self.read('server.json')
@@ -233,6 +255,17 @@ class ProjectView:
             return {'stopped': True, 'url': self.url}
 
     def build(self, selection, settings):
+        if settings['adapter'] == 'npm-dev':
+            from .npm_dev import DevPreview
+            service = TaskService(self.root)
+            try:
+                task = service.store.get(selection['task'])
+                if task['state'] in {'rejected', 'trashed'}:
+                    raise ValueError('Результат задачи недоступен')
+                folder = service.store.folder(selection['task'])
+                return DevPreview(self.root, folder, folder / 'workspace', selection, self.stop_event)
+            finally:
+                service.close()
         preview = Preview(self.root, selection['task'])
         preview.port = self.port
         if preview.rejected():
@@ -351,15 +384,21 @@ class ProjectView:
         candidate = self.build(selection, settings)
         with self.lock('selection.lock', True):
             if self.selection() != selection:
+                if hasattr(candidate, 'close'):
+                    candidate.close()
                 return
             service = TaskService(self.root)
             try:
                 if profile(service.store) != settings:
+                    if hasattr(candidate, 'close'):
+                        candidate.close()
                     return
             finally:
                 service.close()
-            self.remember(candidate, selection, settings)
+            if settings['adapter'] != 'npm-dev':
+                self.remember(candidate, selection, settings)
             with self.guard:
+                previous_preview = self.preview
                 self.preview = candidate
                 self.state.pop('error', None)
                 self.state.pop('restore_error', None)
@@ -369,6 +408,8 @@ class ProjectView:
                     building=False, source_digest=candidate.state['revision'],
                     message=f"TASK-{selection['task']:03} · " + ('рабочая версия' if selection['mode'] == 'working' else 'последняя проверенная версия'))
                 self.write('status.json', self.state)
+            if hasattr(previous_preview, 'close'):
+                previous_preview.close()
 
     def build_loop(self):
         previous = None
@@ -399,6 +440,8 @@ class ProjectView:
                 workspace_version = version if selection['mode'] == 'working' else source_digest(workspace)
                 fingerprint = json.dumps([selection, settings, version, workspace_version], sort_keys=True)
                 if fingerprint == previous:
+                    if hasattr(self.preview, 'process') and (not self.preview.process or self.preview.process.poll() is not None):
+                        raise RuntimeError('npm run dev завершился. Повторите запуск просмотра')
                     continue
                 previous = fingerprint
                 with self.guard:
@@ -453,6 +496,20 @@ class ProjectView:
                         status, content_type = 200, 'application/json'
                         if self.command == 'POST':
                             threading.Thread(target=server.shutdown, daemon=True).start()
+                    elif trusted and not path.startswith('/__view/') and hasattr(view.preview, 'proxy'):
+                        query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                        pinned = {'__tw_task', '__tw_version'} & set(query)
+                        with view.guard:
+                            valid = not pinned or (pinned == {'__tw_task', '__tw_version'} and query['__tw_task'] == [str(view.state['active_task'])] and query['__tw_version'] == [view.state.get('source_digest')])
+                            preview = view.preview
+                        if not valid:
+                            self.send_error(409, 'Requested version is no longer active')
+                            return
+                        try:
+                            preview.proxy(self)
+                        except (OSError, ValueError):
+                            self.close_connection = True
+                        return
                     else:
                         status, content_type, body = view.dispatch(self.command, self.path, self.headers)
                     self.send_response(status)
@@ -468,6 +525,11 @@ class ProjectView:
                     self.wfile.write(body)
                 do_GET = dispatch
                 do_POST = dispatch
+                do_PUT = dispatch
+                do_PATCH = dispatch
+                do_DELETE = dispatch
+                do_HEAD = dispatch
+                do_OPTIONS = dispatch
                 def log_message(self, *_):
                     pass
             server = ThreadingHTTPServer(('127.0.0.1', self.port), Handler)
@@ -488,7 +550,9 @@ class ProjectView:
                 server.serve_forever()
             finally:
                 self.stop_event.set()
-                thread.join(timeout=35)
+                thread.join(timeout=65)
+                if hasattr(self.preview, 'close'):
+                    self.preview.close()
                 server.server_close()
                 self.state.update(building=False, current=False, message='Просмотр остановлен')
                 self.write('status.json', self.state)

@@ -4,10 +4,11 @@ import type { ProjectViewResponse,ViewMode,ViewOperation,Transport } from '@/lib
 import { pendingSlot,readPending,writePending } from '@/lib/transport'
 import { ApiError } from '@/lib/http-transport'
 
-type Command={project:string;task:number;body:{action:'select'|'refresh';mode:ViewMode};revision:string;key:string;operation?:string}
+type Command={project:string;task:number;body:{action:'select'|'refresh'|'stop';mode:ViewMode};revision:string;key:string;operation?:string}
 type State={data?:ProjectViewResponse;stale:boolean;error:string;pending?:Command;busy:boolean;waiting?:ViewMode}
 type Runtime={scope:string;alive:boolean;sequence:number;locked:boolean;pending?:Command;pollOperation:boolean;load:()=>Promise<void>}
 function validate(data:ProjectViewResponse,task:number){
+ if(data.actions!==undefined&&(!Array.isArray(data.actions)||data.actions.some(action=>!['select','refresh','stop'].includes(action))))return false
  if(data.task_id!==task||typeof data.available!=='boolean'||!(data.revision===null||typeof data.revision==='string')||!(data.reason===null||typeof data.reason==='string'))return false
  const v=data.view
  if(v===null)return true
@@ -45,7 +46,7 @@ export function useProjectView(transport:Transport,task:number,enabled:boolean,c
   let storageError=''
   try{
    const p=readPending<Command>(slot)
-   if(p){if(p.project!==(transport.projectId??'')||p.task!==task||!p.body||!['select','refresh'].includes(p.body.action)||!['checked','working'].includes(p.body.mode)||Object.keys(p.body).sort().join(',')!=='action,mode'||typeof p.revision!=='string'||!p.revision||typeof p.key!=='string'||!p.key||(p.operation!==undefined&&(typeof p.operation!=='string'||!p.operation)))throw Error('Некорректная сохранённая команда просмотра');ctx.pending=p}
+   if(p){if(p.project!==(transport.projectId??'')||p.task!==task||!p.body||!['select','refresh','stop'].includes(p.body.action)||!['checked','working'].includes(p.body.mode)||Object.keys(p.body).sort().join(',')!=='action,mode'||typeof p.revision!=='string'||!p.revision||typeof p.key!=='string'||!p.key||(p.operation!==undefined&&(typeof p.operation!=='string'||!p.operation)))throw Error('Некорректная сохранённая команда просмотра');ctx.pending=p}
   }catch(e){storageError=e instanceof Error?e.message:'Хранилище недоступно';ctx.locked=true}
   setState({stale:true,error:storageError,pending:ctx.pending,busy:ctx.locked})
   const abort=new AbortController()
@@ -74,17 +75,18 @@ export function useProjectView(transport:Transport,task:number,enabled:boolean,c
   void poll()
   return()=>{ctx.alive=false;abort.abort();viewAbort?.abort();clearTimeout(timer)}
  },[transport,task,enabled,scope])
- async function send(action:'select'|'refresh',mode:ViewMode,retry=false){
+ async function send(action:'select'|'refresh'|'stop',mode:ViewMode,retry=false){
   const ctx=runtime.current
   if(!enabled||!csrf?.trim()||!ctx?.alive||ctx.scope!==scope||ctx.locked)return
   if(!retry&&(ctx.pending||state.stale||!state.data?.revision))return
+  if(!retry&&action==='stop'&&!state.data?.actions?.includes('stop'))return
   if(retry&&!ctx.pending)return
   const slot=pendingSlot(transport,`view:${task}`)
   ctx.locked=true;ctx.sequence++
   let command=ctx.pending
   try{
    if(!command){command={project:transport.projectId??'',task,body:{action,mode},revision:state.data!.revision!,key:crypto.randomUUID()};writePending(slot,command);ctx.pending=command}
-   setState(s=>({...s,busy:true,pending:command,error:'',waiting:command!.body.mode,stale:true}))
+   setState(s=>({...s,busy:true,pending:command,error:'',waiting:command!.body.action==='stop'?undefined:command!.body.mode,stale:true}))
    const op=command.operation?await transport.get<ViewOperation>(`operations/${encodeURIComponent(command.operation)}`):await transport.post<ViewOperation>(`tasks/${task}/view`,command.body,command.key,csrf,command.revision)
    if(ctx.alive)finish(op,ctx,slot)
   }catch(e){

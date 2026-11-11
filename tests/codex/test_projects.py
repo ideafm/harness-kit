@@ -174,3 +174,37 @@ class ProjectTests(unittest.TestCase):
         registry.path.symlink_to(self.root / 'app.py')
         with self.assertRaises(ValueError):
             registry.listing()
+
+    def test_remove_last_project_preserves_source_and_reconnects(self):
+        registry = self.app.projects
+        ident = project_id(self.root)
+        before = (self.root / 'app.py').read_bytes()
+        old = registry.revision()
+        registry.remove(ident, old)
+        self.assertEqual(registry.listing(), [])
+        self.assertEqual((self.root / 'app.py').read_bytes(), before)
+        self.assertEqual(self.get('/api/v1/projects')[1]['data']['default_project_id'], '')
+        registry.remove(ident, old)
+        registry.add(str(self.root))
+        from harness.operator import OperatorError
+        with self.assertRaises(OperatorError):
+            registry.remove(ident, old)
+        self.assertEqual(len(registry.listing()), 1)
+
+    def test_remove_requires_csrf_revision_and_idle_worker(self):
+        from harness.runner import lock
+        self.connect()
+        path = '/api/v1/projects/' + self.ident + '/disconnect'
+        payload = b'{"action":"disconnect"}'
+        self.assertEqual(self.app.dispatch('POST', path, self.headers, payload)[0], 403)
+        headers = dict(self.headers, Origin=f'http://127.0.0.1:{PORT}', **{'Content-Type': 'application/json',
+            'X-CSRF-Token': self.app.csrf, 'If-Match': self.app.projects.revision()})
+        service = TaskService(self.other)
+        try:
+            with lock(service.store, 'worker.lock'):
+                self.assertEqual(self.app.dispatch('POST', path, headers, payload)[0], 409)
+        finally:
+            service.close()
+        self.assertEqual(self.app.dispatch('POST', path, headers, payload)[0], 200)
+        self.assertEqual(self.get('/api/v1/projects/' + self.ident + '/status')[0], 404)
+        self.assertTrue((self.other / '.harness/config.json').is_file())

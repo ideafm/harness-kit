@@ -353,6 +353,8 @@ class Runner:
                     if task["state"] != "running":
                         break
                 if task['state'] == 'review' and task['stage'] == 'done':
+                    from .auto_preview import publish
+                    publish(self.store, ident)
                     from .auto_apply import maybe_apply
                     try:
                         maybe_apply(self.store, ident)

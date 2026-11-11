@@ -42,7 +42,7 @@ def parser():
     configure = sub.add_parser('configure', help='Показать или сохранить команды проверок и запуска проекта')
     configure.add_argument('--check', help='Команда проверок без shell-операторов')
     run_group = configure.add_mutually_exclusive_group()
-    run_group.add_argument('--run', help='Сохранить команду запуска; runtime-исполнение пока не подключено')
+    run_group.add_argument('--run', help='Команда запуска; npm run dev поддерживается изолированным runtime')
     run_group.add_argument('--clear-run', action='store_true')
     sub.add_parser('goals', help='Показать большие задачи')
     goal_show = sub.add_parser('goal-show', help='Общие критерии и состояние большой задачи')
@@ -55,7 +55,7 @@ def parser():
     doctor_parser.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
     runtime_profile = sub.add_parser('profile', help='Профиль просмотра проекта')
     runtime_profile.add_argument('action', choices=['configure', 'status'])
-    runtime_profile.add_argument('--adapter', dest='action_adapter', choices=['static', 'next-ui'])
+    runtime_profile.add_argument('--adapter', dest='action_adapter', choices=['static', 'next-ui', 'npm-dev'])
     view = sub.add_parser('view', help='Постоянный просмотр проекта')
     view.add_argument('target', nargs='?', default='status')
     view.add_argument('--mode', choices=['working', 'checked'], default='checked')
@@ -199,7 +199,7 @@ def dispatch_store(args, store):
         from .project_commands import configure
         result = configure(store, args.check, args.run, args.clear_run)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        if result['run']:
+        if result['run_status'] == 'configuration_only':
             print('Команда запуска сохранена. Автоматический запуск runtime ещё не подключён; эта команда сейчас не исполняется.')
     elif action in {'goals', 'goal-show', 'goal-submit', 'goal-recheck'}:
         from .goals import list_goals, show
