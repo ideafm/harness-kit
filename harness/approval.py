@@ -15,6 +15,8 @@ def validate_mode(mode):
 
 
 def requires_approval(data):
+    if data.get('execution_policy', {}).get('requires_plan_approval'):
+        return True
     if not any(key in data for key in ("approval_mode", "effective_approval", "plan_version", "risk")):
         return False
     if data.get("approval_mode", "auto") == "approve-plan" or data.get("effective_approval") == "approve-plan":

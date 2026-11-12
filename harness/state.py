@@ -71,7 +71,7 @@ class Store:
         if (stat.st_dev, stat.st_ino) != self.identity:
             raise RuntimeError("Экземпляр проекта заменён; перезапустите контроллер")
 
-    def add(self, request, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False, depends_on=None):
+    def add(self, request, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False, depends_on=None, execution_profile=None):
         if type(manual_acceptance) is not bool:
             raise ValueError("manual_acceptance должен быть логическим значением")
         dependencies = [] if depends_on is None else depends_on
@@ -111,21 +111,30 @@ class Store:
                 if stage_name not in STAGE_KEYS or not isinstance(stage_model, str):
                     raise ValueError(f"Некорректная модель этапа в stage_models: {stage_name}")
                 validated_stage_models[stage_name] = stage_model
+        from .execution_profiles import validate as validate_profile, snapshot
+        explicit_route = stage_backends is not None or stage_models is not None or model is not None
+        selected_profile = validate_profile(execution_profile if execution_profile is not None else 'manual' if explicit_route else config_data.get('execution_profile', 'manual'))
+        if selected_profile != 'manual' and explicit_route:
+            raise ValueError('Автоматический профиль нельзя смешивать с ручными stage/model настройками')
+        policy = snapshot(selected_profile, selected_backend, config_data.get('gemini_model', ''))
         normalized_scope = normalize_scope(scope if scope is not None else config_data.get("path_scope") or config_data.get("scope"))
         self.ensure_current()
         with self.transaction():
             data = {"request": request, "attempts": {}, "answers": [], "approval_mode": approval_mode, "backend": selected_backend}
+            data['execution_profile'] = selected_profile
+            if policy:
+                data['execution_policy'] = policy
             if dependencies:
                 data["depends_on"] = list(dependencies)
             if manual_acceptance:
                 data["manual_acceptance"] = True
-            if validated_stage_backends:
+            if validated_stage_backends and not policy:
                 data["stage_backends"] = validated_stage_backends
             if model is not None:
                 if not isinstance(model, str):
                     raise ValueError("model должен быть строкой")
                 data["model"] = model
-            if validated_stage_models:
+            if validated_stage_models and not policy:
                 data["stage_models"] = validated_stage_models
             if normalized_scope:
                 data["path_scope"] = normalized_scope

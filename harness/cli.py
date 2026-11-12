@@ -13,6 +13,7 @@ from .decisions import decide
 from .runner import Runner, lock
 from .security import BACKENDS, doctor, git, validate_backend
 from .state import Store, atomic_json
+from .execution_profiles import PROFILES
 
 
 def parser():
@@ -23,12 +24,14 @@ def parser():
     init = sub.add_parser("init", help="Инициализировать проект")
     init.add_argument("--check", required=True, help="Команда проверок без shell-операторов")
     init.add_argument("--model", default="")
+    init.add_argument("--execution-profile", choices=PROFILES)
     init.add_argument("--backend", type=validate_backend, choices=BACKENDS, default="codex")
     init.add_argument("--codex", default="codex")
     init.add_argument("--agy", default="agy")
     init.add_argument("--timeout", type=int, default=1800)
     add = sub.add_parser("add", help="Добавить задачу")
     add.add_argument("request")
+    add.add_argument("--execution-profile", choices=PROFILES)
     add.add_argument("--approval", choices=MODES, default="auto")
     add.add_argument("--backend", type=validate_backend, default=argparse.SUPPRESS)
     add.add_argument("--depends-on", action="append", type=task_id, default=None)
@@ -40,6 +43,8 @@ def parser():
     enqueue.add_argument('--start', action='store_true', help='Также запустить worker')
     sub.add_parser("status", help="Показать задачи и ожидания")
     configure = sub.add_parser('configure', help='Показать или сохранить команды проверок и запуска проекта')
+    configure.add_argument('--execution-profile', choices=PROFILES)
+    configure.add_argument('--gemini-model', help='Модель Gemini для реализации в автоматическом профиле')
     configure.add_argument('--check', help='Команда проверок без shell-операторов')
     run_group = configure.add_mutually_exclusive_group()
     run_group.add_argument('--run', help='Команда запуска; npm run dev поддерживается изолированным runtime')
@@ -146,10 +151,13 @@ def init(args):
     if any(token in {";", "&&", "||", "|", ">", "<"} for token in check):
         raise ValueError("check — argv, без shell-операторов; вынесите составную проверку в скрипт")
     backend = validate_backend(getattr(args, "global_backend", None) or getattr(args, "backend", "codex") or "codex")
+    selected_profile = getattr(args, 'execution_profile', None) or ('manual' if args.model else 'auto-balanced')
+    if args.model and selected_profile != 'manual':
+        raise ValueError('Общий --model нельзя смешивать с автоматическим профилем; выберите manual или настройте профиль без --model')
     codex = shutil.which(args.codex)
     agy = shutil.which(getattr(args, "agy", "agy"))
-    if backend == "codex" and not codex:
-        raise ValueError("Codex CLI не найден")
+    if (backend == "codex" or selected_profile != "manual") and not codex:
+        raise ValueError("Codex CLI не найден; автоматический профиль использует его для плана и ревью. Для одного Gemini выберите --execution-profile manual")
     if backend == "gemini" and not Path("/usr/bin/sandbox-exec").is_file() and not agy:
         raise ValueError("Antigravity CLI (agy) или sandbox-exec не найден")
     executable = shutil.which(check[0])
@@ -160,6 +168,7 @@ def init(args):
     atomic_json(home / "config.json", {"version": 1, "backend": backend,
                 "codex": codex or args.codex, "agy": agy or getattr(args, "agy", "agy"),
                 "sandbox": "/usr/bin/sandbox-exec", "model": args.model,
+                "execution_profile": selected_profile,
                 "check": check, "timeout": args.timeout, "max_attempts": 3,
                 'commit_after_accept': True, 'task_worktrees': True, 'apply_after_accept': True,
                 'integration_branch': git(root, 'symbolic-ref', '--short', 'HEAD').decode().strip()})
@@ -197,7 +206,7 @@ def dispatch_store(args, store):
             print(json.dumps(result, ensure_ascii=False, indent=2))
     elif action == 'configure':
         from .project_commands import configure
-        result = configure(store, args.check, args.run, args.clear_run)
+        result = configure(store, args.check, args.run, args.clear_run, args.execution_profile, args.gemini_model)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if result['run_status'] == 'configuration_only':
             print('Команда запуска сохранена. Автоматический запуск runtime ещё не подключён; эта команда сейчас не исполняется.')
@@ -221,6 +230,7 @@ def dispatch_store(args, store):
             'backlog' if getattr(args, 'backlog', False) else 'queue',
             backend=getattr(args, "backend", None),
             scope=getattr(args, "scope", None),
+            execution_profile=getattr(args, "execution_profile", None),
             depends_on=getattr(args, "depends_on", None), manual_acceptance=getattr(args, "manual_acceptance", False))))
     elif action == 'enqueue':
         from .service import TaskService

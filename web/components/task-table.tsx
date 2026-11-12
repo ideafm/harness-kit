@@ -201,6 +201,7 @@ export function TaskPanel({ transport = httpTransport }: { transport?: Transport
               open={isNewTaskOpen}
               onOpenChange={setIsNewTaskOpen}
               defaultBackend={projectBackend}
+              defaultExecutionProfile={data.status?.execution_profile??'manual'}
             />
           </div>
         </div>

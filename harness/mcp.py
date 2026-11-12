@@ -38,6 +38,7 @@ TOOLS = [
     tool("tw_submit", "Сохранить задачу; placement=backlog запрещает автозапуск даже работающим worker, queue — очередь",
          {"request": TEXT, "start": {"type": "boolean"},
           'depends_on': {'type': 'array', 'items': IDENT, 'minItems': 1, 'maxItems': 100, 'uniqueItems': True},
+          'execution_profile': {'type': 'string', 'enum': ['auto-balanced', 'thorough', 'manual']},
           'manual_acceptance': {'type': 'boolean'},
           'placement': {'type': 'string', 'enum': ['queue', 'backlog']},
           "approval": {"type": "string", "enum": ["auto", "approve-plan"]}}, ["request"]),
@@ -104,7 +105,7 @@ class Server:
             return self.service.artifact(arguments["task"], arguments["artifact"])
         if name == "tw_submit":
             return self.service.submit(arguments["request"], arguments.get("start", True), arguments.get("approval", "auto"),
-                arguments.get('placement', 'queue'), depends_on=arguments.get('depends_on'), manual_acceptance=arguments.get('manual_acceptance', False))
+                arguments.get('placement', 'queue'), depends_on=arguments.get('depends_on'), manual_acceptance=arguments.get('manual_acceptance', False), execution_profile=arguments.get('execution_profile'))
         if name == 'tw_enqueue':
             return self.service.enqueue(arguments['tasks'], arguments['start'])
         if name == "tw_start":

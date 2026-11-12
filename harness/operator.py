@@ -48,7 +48,7 @@ class Operator:
             actions.append('enqueue')
         if state == 'waiting':
             actions.append('answer')
-        if state in {'paused', 'rate_limited'}:
+        if state in {'paused', 'rate_limited'} and not data.get('execution_policy'):
             actions.append('switch_backend')
         if state == 'awaiting_approval':
             actions.append('approve_plan')
@@ -137,6 +137,10 @@ class Operator:
                 'accept_result': {'action', 'result_version', 'result_digest'},
                 'request_changes': {'action', 'result_version', 'result_digest', 'feedback'},
                 'reject_result': {'action', 'result_version', 'result_digest', 'reason'}}[action]
+        if action == 'submit' and 'execution_profile' in payload:
+            keys = keys | {'execution_profile'}
+            from .execution_profiles import validate
+            validate(payload['execution_profile'])
         if action == 'submit' and 'attachments' in payload:
             keys = keys | {'attachments'}
             from .attachments import resolve
@@ -172,7 +176,7 @@ class Operator:
     def dispatch(self, action, ident, payload):
         if action == 'submit':
             return self.service.submit(payload['request'], approval_mode=payload['approval_mode'],
-                placement=payload.get('placement', 'queue'), backend=payload.get('backend'), manual_acceptance=payload.get('manual_acceptance', False), depends_on=payload.get('depends_on'), attachments=payload.get('attachments'))['task']['id']
+                placement=payload.get('placement', 'queue'), backend=payload.get('backend'), manual_acceptance=payload.get('manual_acceptance', False), depends_on=payload.get('depends_on'), attachments=payload.get('attachments'), execution_profile=payload.get('execution_profile'))['task']['id']
         control = self.control(ident)
         if action == 'answer' and payload['question_id'] != control['pending_question_id']:
             raise OperatorError('stale_question', 'Вопрос изменился', 409)

@@ -30,7 +30,7 @@ def inferred_check(root):
     return None
 
 
-def connect(root, check=None, model=None, backend=None):
+def connect(root, check=None, model=None, backend=None, execution_profile=None):
     if backend is not None:
         backend = validate_backend(backend)
     from .projects import Projects
@@ -78,8 +78,10 @@ def connect(root, check=None, model=None, backend=None):
         arguments = ["--project", str(root), "init", "--check", selected, "--backend", selected_backend]
         if model:
             arguments += ["--model", model]
+        if execution_profile:
+            arguments += ["--execution-profile", execution_profile]
         harness_main(arguments)
-    elif check or model:
+    elif check or model or execution_profile:
         raise ValueError("Проект уже подключён; повторный init не меняет check/model. Для проверок используйте tw configure --check 'команда'")
     elif backend:
         current = json.loads(config.read_text())
@@ -335,6 +337,7 @@ def main(argv=None):
     parser.add_argument("--project", type=Path, default=Path.cwd())
     parser.add_argument("--check")
     parser.add_argument("--model")
+    parser.add_argument("--execution-profile", choices=["auto-balanced", "thorough", "manual"])
     parser.add_argument("--backend", choices=list(BACKENDS))
     try:
         validate_cli_backend_flags(arguments)
@@ -348,12 +351,12 @@ def main(argv=None):
         from .projects import Projects
         root = Projects(KIT).validate(str(args.project.absolute())).resolve()
         if args.command == "init":
-            connect(root, args.check, args.model, args.backend)
+            connect(root, args.check, args.model, args.backend, args.execution_profile)
             register_project(root)
             return
         if not (root / ".harness/tw.json").is_file():
-            connect(root, args.check, args.model, args.backend)
-        elif args.check or args.model:
+            connect(root, args.check, args.model, args.backend, args.execution_profile)
+        elif args.check or args.model or args.execution_profile:
             raise ValueError("check/model задаются при первом подключении или tw init")
         elif args.backend:
             connect(root, backend=args.backend)

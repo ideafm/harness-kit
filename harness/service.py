@@ -53,6 +53,8 @@ class TaskService:
         from .execution_status import describe
         result['execution'] = describe(self.store, task, events)
         result['attachments'] = data.get('attachments', [])
+        result['execution_profile'] = data.get('execution_profile', 'manual')
+        result['execution_policy'] = data.get('execution_policy')
         result['depends_on'] = data.get('depends_on', [])
         result['dependency_wait'] = self.store.dependency_wait(task)
         if data.get('preview_error'):
@@ -65,6 +67,8 @@ class TaskService:
                     "approval_mode", "effective_approval", "plan_version", "plan_approval", "risk", "scope", "approval_reason", "git_result", "commit_error", "integration", "integration_error", "queue_order", "backend", "stage_backends", "model", "stage_models", "path_scope", "accepted_by", "manual_acceptance", "auto_apply_error"):
             if key in data:
                 result[key] = data[key]
+        if data.get('execution_policy') and task['stage'] in data['execution_policy']['stages']:
+            result['backend'] = data['execution_policy']['stages'][task['stage']]['backend']
         if 'backend' not in result:
             result['backend'] = self.default_backend
         stage_backends = data.get('stage_backends')
@@ -96,7 +100,8 @@ class TaskService:
         active = next((task for task in tasks if task['state'] == 'running'), None)
         worker['task_id'] = active['id'] if active and worker['running'] else None
         worker['observation'] = active['observation'] if active and worker['running'] else None
-        return {"project": str(self.root), "tasks": tasks, "worker": worker}
+        config = json.loads((self.store.home / 'config.json').read_text())
+        return {"project": str(self.root), "tasks": tasks, "worker": worker, 'execution_profile': config.get('execution_profile', 'manual')}
 
     def show(self, ident):
         return self.view(self.store.get(ident))
@@ -177,7 +182,7 @@ class TaskService:
                 status = {"running": True, "pid": process.pid}
         return {"task": self.show(ident), "worker": status}
 
-    def submit(self, request, start=True, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False, depends_on=None, attachments=None):
+    def submit(self, request, start=True, approval_mode="auto", placement='queue', backend=None, stage_backends=None, model=None, stage_models=None, scope=None, manual_acceptance=False, depends_on=None, attachments=None, execution_profile=None):
         if not isinstance(request, str) or not request.strip() or len(request) > 50000:
             raise ValueError("Нужен текст задачи от 1 до 50000 символов")
         if type(start) is not bool:
@@ -197,6 +202,7 @@ class TaskService:
             scope=scope,
             manual_acceptance=manual_acceptance,
             depends_on=depends_on,
+            execution_profile=execution_profile,
         )
         if inputs:
             task['data']['attachments'] = inputs

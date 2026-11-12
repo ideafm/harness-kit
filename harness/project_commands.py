@@ -37,7 +37,12 @@ def inferred_npm_check(root):
     return None
 
 
-def configure(store, check=None, run=None, clear_run=False):
+def configure(store, check=None, run=None, clear_run=False, execution_profile=None, gemini_model=None):
+    if execution_profile is not None:
+        from .execution_profiles import validate
+        validate(execution_profile)
+    if gemini_model is not None and (not isinstance(gemini_model, str) or not gemini_model.strip() or len(gemini_model)>200 or any(ord(char)<32 for char in gemini_model)):
+        raise ValueError('Некорректное имя модели Gemini')
     if run is not None and clear_run:
         raise ValueError('Нельзя одновременно задать и удалить команду запуска')
     parsed_check = parse_command(check) if check is not None else None
@@ -47,7 +52,7 @@ def configure(store, check=None, run=None, clear_run=False):
         if executable is None:
             raise ValueError('Исполняемый файл команды проверок не найден')
         parsed_check[0] = str(Path(executable).resolve())
-    changed = parsed_check is not None or parsed_run is not None or clear_run
+    changed = parsed_check is not None or parsed_run is not None or clear_run or execution_profile is not None or gemini_model is not None
     with ExitStack() as stack:
         if changed:
             stack.enter_context(lock(store))
@@ -56,6 +61,10 @@ def configure(store, check=None, run=None, clear_run=False):
         if path.is_symlink() or path.with_suffix('.json.tmp').is_symlink():
             raise ValueError('Конфигурация заменена ссылкой')
         config = json.loads(read_regular(store.home, 'config.json'))
+        if execution_profile is not None:
+            config['execution_profile'] = execution_profile
+        if gemini_model is not None:
+            config['gemini_model'] = gemini_model
         if parsed_check:
             config['check'] = parsed_check
         if parsed_run:
@@ -74,5 +83,5 @@ def configure(store, check=None, run=None, clear_run=False):
                 raise ValueError('Профиль заменён ссылкой')
             if runtime.is_file() and json.loads(runtime.read_text()).get('adapter') == 'npm-dev':
                 runtime.unlink()
-        return {'check': config['check'], 'run': config.get('run_command'),
+        return {'execution_profile': config.get('execution_profile', 'manual'), 'gemini_model': config.get('gemini_model', ''), 'check': config['check'], 'run': config.get('run_command'),
                 'run_status': 'npm-dev' if config.get('run_command') == ['npm', 'run', 'dev'] else 'configuration_only' if config.get('run_command') else 'not_configured'}

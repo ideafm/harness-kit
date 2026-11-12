@@ -158,7 +158,7 @@ class WebApplication:
                         from .auto_apply import policy
                         status['auto_apply'] = policy(service.store)
                         status['auto_apply']['confirmation_url'] = f'http://127.0.0.1:{CONFIRM_PORT}/policy/embed?project={project_id(root)}'
-                        status['project'] = {'id': project_id(root), 'name': root.name, 'backend': service.default_backend}
+                        status['project'] = {'id': project_id(root), 'name': root.name, 'backend': service.default_backend, 'execution_profile': status['execution_profile']}
                         status['tasks'] = [dict(task, revision=operator.control(task['id'])['revision']) for task in status['tasks']]
                         return self.json(200, status)
                     match = re.fullmatch(r'/api/v1/tasks/([1-9][0-9]*)(?:/(control|events|artifacts/([a-z]+)))?', parsed.path)

@@ -1,4 +1,5 @@
 'use client'
+import { executionProfiles,profileDescription } from '@/lib/execution-profiles'
 import { AttachmentPicker } from './task-attachments'
 import type { Attachment } from '@/lib/contracts'
 import { useEffect, useRef, useState } from 'react'
@@ -17,7 +18,8 @@ export function CreateTaskSheet({
   onCreated,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
-  defaultBackend = 'codex'
+  defaultBackend = 'codex',
+  defaultExecutionProfile = 'manual'
 }: {
   transport: Transport
   session?: Session
@@ -26,6 +28,7 @@ export function CreateTaskSheet({
   open?: boolean
   onOpenChange?: (open: boolean) => void
   defaultBackend?: string
+  defaultExecutionProfile?: string
 }) {
   const active = useRef(true)
   useEffect(() => {
@@ -52,6 +55,8 @@ export function CreateTaskSheet({
 
   const [text, setText] = useState(restored?.body.request ?? '')
   const [mode, setMode] = useState(restored?.body.approval_mode ?? 'approve-plan')
+  const [executionProfile,setExecutionProfile]=useState(restored?.body.execution_profile??'default')
+  const effectiveProfile=executionProfile==='default'?defaultExecutionProfile:executionProfile
   const [backend, setBackend] = useState(restored?.body.backend ?? 'default')
   const [dependencies,setDependencies] = useState(restored?.body.depends_on?.join(', ') ?? '')
   const [manualAcceptance,setManualAcceptance] = useState(restored?.body.manual_acceptance ?? false)
@@ -68,7 +73,7 @@ export function CreateTaskSheet({
     lock.current = true
     setBusy(true)
     setError('')
-    const body: { request: string; approval_mode: string; placement?: string; backend?: string; manual_acceptance?: boolean; depends_on?: number[];attachments?:string[] } = {
+    const body: { request: string; approval_mode: string; placement?: string; backend?: string; manual_acceptance?: boolean; depends_on?: number[];attachments?:string[];execution_profile?:string } = {
       request: text,
       approval_mode: mode
     }
@@ -87,6 +92,7 @@ export function CreateTaskSheet({
     if (!autoStart) {
       body.placement = 'backlog'
     }
+    if(executionProfile!=='default'||effectiveProfile!=='manual')body.execution_profile=effectiveProfile
     if(files.length)body.attachments=files.map(file=>file.id)
     const signature = JSON.stringify(body)
     if (pending.current && JSON.stringify(pending.current.body) !== signature) {
@@ -178,13 +184,14 @@ export function CreateTaskSheet({
             </div>
 
             <AttachmentPicker files={files} onChange={setFiles} onBusy={setUploading} transport={transport} csrf={session?.csrf_token} disabled={busy||!enabled||Boolean(pending.current)}/>
+            <div className="space-y-1.5"><label htmlFor="execution-profile" className="block text-xs font-semibold">Профиль исполнения</label><select id="execution-profile" value={executionProfile} onChange={event=>setExecutionProfile(event.target.value)} disabled={busy} className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-950"><option value="default">Профиль проекта ({executionProfiles[defaultExecutionProfile]??defaultExecutionProfile})</option>{Object.entries(executionProfiles).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select><p className="text-[11px] leading-relaxed text-zinc-500">{profileDescription(effectiveProfile,backend==='default'?defaultBackend:backend)}</p><p className="text-[11px] text-zinc-500">Качество приоритетно. Профиль не отключает проверки и не разрешает автоматическую приёмку.</p></div>
             {/* Backend & Approval Mode grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label htmlFor="backend" className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
                     <Cpu className="w-3 h-3 text-purple-500" />
-                    <span>Исполнитель (Агент)</span>
+                    <span>{effectiveProfile==='manual'?'Исполнитель (Агент)':'Исполнитель реализации'}</span>
                   </span>
                 </label>
                 <select
